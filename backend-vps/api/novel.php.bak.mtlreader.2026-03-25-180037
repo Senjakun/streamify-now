@@ -1,0 +1,777 @@
+<?php
+require_once __DIR__ . '/../config/database.php';
+
+setCORSHeaders();
+putenv("NOVEL_FETCH_PROXY=http://127.0.0.1:8787/fetch?url={url}");
+
+$pdo = getDB();
+$action = $_GET['action'] ?? 'list';
+
+function success($data) {
+    echo json_encode(['success' => true, 'data' => $data], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function error_response($message, $statusCode = 400, array $extra = []) {
+    http_response_code($statusCode);
+    echo json_encode(array_merge(['success' => false, 'error' => $message], $extra), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function env_value($key, $default = null) {
+    $value = getenv($key);
+    if ($value === false || $value === '') {
+        return $default;
+    }
+    return $value;
+}
+
+function env_bool($key, $default = false) {
+    $value = getenv($key);
+    if ($value === false || $value === '') {
+        return $default;
+    }
+    return in_array(strtolower((string)$value), ['1', 'true', 'yes', 'on'], true);
+}
+
+function env_int($key, $default = 0) {
+    $value = getenv($key);
+    if ($value === false || $value === '') {
+        return $default;
+    }
+    return (int)$value;
+}
+
+function rrmdir_make($dir) {
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+}
+
+function cache_root_dir() {
+    $dir = env_value('NOVEL_CACHE_DIR', realpath(__DIR__ . '/..') . '/storage/novel-cache');
+    rrmdir_make($dir);
+    return $dir;
+}
+
+function lock_root_dir() {
+    $dir = env_value('NOVEL_LOCK_DIR', realpath(__DIR__ . '/..') . '/storage/novel-locks');
+    rrmdir_make($dir);
+    return $dir;
+}
+
+function chapter_cache_file($slug, $chapterNumber) {
+    $slugSafe = preg_replace('/[^a-z0-9\-_]+/i', '-', strtolower($slug));
+    $dir = rtrim(cache_root_dir(), '/') . '/' . $slugSafe;
+    rrmdir_make($dir);
+    return $dir . '/chapter-' . str_pad((string)$chapterNumber, 6, '0', STR_PAD_LEFT) . '.json.gz';
+}
+
+function chapter_lock_file($slug, $chapterNumber) {
+    $slugSafe = preg_replace('/[^a-z0-9\-_]+/i', '-', strtolower($slug));
+    $dir = rtrim(lock_root_dir(), '/') . '/' . $slugSafe;
+    rrmdir_make($dir);
+    return $dir . '/chapter-' . str_pad((string)$chapterNumber, 6, '0', STR_PAD_LEFT) . '.lock';
+}
+
+function acquire_chapter_lock($slug, $chapterNumber) {
+    $path = chapter_lock_file($slug, $chapterNumber);
+    $fp = fopen($path, 'c');
+    if (!$fp) {
+        return null;
+    }
+    if (!flock($fp, LOCK_EX)) {
+        fclose($fp);
+        return null;
+    }
+    return $fp;
+}
+
+function release_chapter_lock($lockHandle) {
+    if ($lockHandle) {
+        @flock($lockHandle, LOCK_UN);
+        @fclose($lockHandle);
+    }
+}
+
+function extract_inner_html(DOMNode $node) {
+    $html = '';
+    foreach ($node->childNodes as $child) {
+        $html .= $node->ownerDocument->saveHTML($child);
+    }
+    return $html;
+}
+
+function sanitize_html_fragment($html) {
+    if ($html === null || $html === '') {
+        return '';
+    }
+
+    $html = preg_replace('#<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>#is', '', $html);
+    $html = preg_replace('#<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>#is', '', $html);
+    $html = preg_replace('#<iframe\b[^<]*(?:(?!</iframe>)<[^<]*)*</iframe>#is', '', $html);
+    $html = preg_replace('#<ins\b[^<]*(?:(?!</ins>)<[^<]*)*</ins>#is', '', $html);
+    $html = preg_replace('#<svg\b[^<]*(?:(?!</svg>)<[^<]*)*</svg>#is', '', $html);
+    $html = preg_replace('#<noscript\b[^<]*(?:(?!</noscript>)<[^<]*)*</noscript>#is', '', $html);
+    $html = preg_replace('#<div[^>]*(?:ads?|advert|banner|sponsor|promo|vdo|mgid|taboola)[^>]*>.*?</div>#is', '', $html);
+    $html = preg_replace('#powered\s+by\s+VDO\.AI.*?(?=<|$)#i', '', $html);
+    $html = preg_replace('#<p>\s*(?:Advertisement|Sponsored|Iklan)\s*</p>#i', '', $html);
+    $html = preg_replace('#\s+on(?:click|load|error|mouse\w+)=("[^"]*"|\'[^\']*\'|[^\s>]+)#i', '', $html);
+    $html = preg_replace('#\s+style=("[^"]*"|\'[^\']*\')#i', '', $html);
+    $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $html = trim($html);
+
+    return $html;
+}
+
+function normalize_whitespace_text($text) {
+    $text = html_entity_decode((string)$text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = preg_replace('/\h+/u', ' ', $text);
+    $text = preg_replace("/\R{3,}/u", "\n\n", $text);
+    return trim($text);
+}
+
+function parse_chapter_payload($html, $chapterNumber) {
+    $title = 'Chapter ' . $chapterNumber;
+    $content = '';
+
+    if (!$html) {
+        return [$title, $content];
+    }
+
+    libxml_use_internal_errors(true);
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadHTML('<?xml encoding="utf-8" ?>' . $html, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET);
+
+    if ($loaded) {
+        $xpath = new DOMXPath($dom);
+
+        $titleQueries = [
+            "//h1[contains(@class, 'entry-title')]",
+            "//h1[contains(@class, 'post-title')]",
+            "//article//h1",
+            "//main//h1",
+            "//h1",
+        ];
+
+        foreach ($titleQueries as $query) {
+            $node = $xpath->query($query)->item(0);
+            if ($node) {
+                $candidate = normalize_whitespace_text($node->textContent);
+                if ($candidate !== '') {
+                    $title = $candidate;
+                    break;
+                }
+            }
+        }
+
+        $contentQueries = [
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' reading-content ')]",
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' entry-content ')]",
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' text-left ')]",
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' chapter-content ')]",
+            "//article",
+            "//main",
+        ];
+
+        foreach ($contentQueries as $query) {
+            $node = $xpath->query($query)->item(0);
+            if ($node) {
+                $candidate = sanitize_html_fragment(extract_inner_html($node));
+                if (strlen(strip_tags($candidate)) > 120) {
+                    $content = $candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    libxml_clear_errors();
+
+    if ($content === '') {
+        if (preg_match('#class="reading-content"[^>]*>(.*?)</div>\s*</div>#is', $html, $m)) {
+            $content = sanitize_html_fragment($m[1]);
+        } elseif (preg_match('#class="text-left"[^>]*>(.*?)</div>#is', $html, $m)) {
+            $content = sanitize_html_fragment($m[1]);
+        }
+    }
+
+    return [$title, $content];
+}
+
+function normalize_sonic_base_url($sourceUrl, $slug) {
+    $url = trim((string)$sourceUrl);
+
+    if ($url === '') {
+        return 'https://www.sonicmtl.com/novel/' . rawurlencode($slug) . '/';
+    }
+
+    if (!preg_match('#^https?://#i', $url)) {
+        $url = 'https://' . ltrim($url, '/');
+    }
+
+    $url = preg_replace('#/chapter-\d+/?$#i', '/', $url);
+    $parts = parse_url($url);
+
+    $scheme = $parts['scheme'] ?? 'https';
+    $host = $parts['host'] ?? 'www.sonicmtl.com';
+    $path = $parts['path'] ?? '';
+
+    if ($path === '' || strpos($path, '/novel/') === false) {
+        $path = '/novel/' . rawurlencode($slug) . '/';
+    }
+
+    $path = rtrim($path, '/') . '/';
+
+    return $scheme . '://' . $host . $path;
+}
+
+function build_chapter_url(array $novel, $chapterNumber) {
+    $base = normalize_sonic_base_url($novel['source_url'] ?? '', $novel['slug']);
+    return rtrim($base, '/') . '/chapter-' . (int)$chapterNumber . '/';
+}
+
+function get_redis_client() {
+    static $client = null;
+    static $checked = false;
+
+    if ($checked) {
+        return $client;
+    }
+    $checked = true;
+
+    if (!env_bool('NOVEL_ENABLE_REDIS', true)) {
+        return null;
+    }
+
+    if (!class_exists('Redis')) {
+        return null;
+    }
+
+    try {
+        $redis = new Redis();
+        $host = env_value('NOVEL_REDIS_HOST', '127.0.0.1');
+        $port = env_int('NOVEL_REDIS_PORT', 6379);
+        $timeout = (float)env_value('NOVEL_REDIS_TIMEOUT', 1.5);
+
+        if (!$redis->connect($host, $port, $timeout)) {
+            return null;
+        }
+
+        $password = env_value('NOVEL_REDIS_PASSWORD', '');
+        if ($password !== '') {
+            $redis->auth($password);
+        }
+
+        $db = env_int('NOVEL_REDIS_DB', 0);
+        if ($db > 0) {
+            $redis->select($db);
+        }
+
+        $client = $redis;
+    } catch (Throwable $e) {
+        $client = null;
+    }
+
+    return $client;
+}
+
+function redis_cache_key($slug, $chapterNumber) {
+    return 'novel:chapter:' . strtolower($slug) . ':' . (int)$chapterNumber;
+}
+
+function read_hot_cache($slug, $chapterNumber) {
+    $redis = get_redis_client();
+    if (!$redis) {
+        return null;
+    }
+
+    try {
+        $payload = $redis->get(redis_cache_key($slug, $chapterNumber));
+        if (!$payload) {
+            return null;
+        }
+        $decoded = json_decode($payload, true);
+        return is_array($decoded) ? $decoded : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function write_hot_cache($slug, $chapterNumber, array $payload) {
+    $redis = get_redis_client();
+    if (!$redis) {
+        return;
+    }
+
+    try {
+        $ttl = max(60, env_int('NOVEL_HOT_CACHE_TTL', 21600));
+        $redis->setex(redis_cache_key($slug, $chapterNumber), $ttl, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    } catch (Throwable $e) {
+        // ignore
+    }
+}
+
+function read_file_cache($slug, $chapterNumber) {
+    $path = chapter_cache_file($slug, $chapterNumber);
+    if (!is_file($path)) {
+        return null;
+    }
+
+    $compressed = @file_get_contents($path);
+    if ($compressed === false) {
+        return null;
+    }
+
+    $json = @gzdecode($compressed);
+    if ($json === false) {
+        return null;
+    }
+
+    $decoded = json_decode($json, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+function write_file_cache($slug, $chapterNumber, array $payload) {
+    $path = chapter_cache_file($slug, $chapterNumber);
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return;
+    }
+    @file_put_contents($path, gzencode($json, 6), LOCK_EX);
+}
+
+function fetch_html_via_proxy($url) {
+    $proxyTemplate = trim((string)env_value('NOVEL_FETCH_PROXY', ''));
+    if ($proxyTemplate === '') {
+        return [null, null];
+    }
+
+    $proxyUrl = strpos($proxyTemplate, '{url}') !== false
+        ? str_replace('{url}', rawurlencode($url), $proxyTemplate)
+        : rtrim($proxyTemplate, '?&') . (strpos($proxyTemplate, '?') === false ? '?' : '&') . 'url=' . rawurlencode($url);
+
+    return fetch_raw_html($proxyUrl, true);
+}
+
+function fetch_raw_html($url, $isProxy = false) {
+    $headers = [
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language: en-US,en;q=0.9,id;q=0.8',
+        'Cache-Control: no-cache',
+        'Pragma: no-cache',
+        'Referer: https://www.sonicmtl.com/',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+    ];
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 25,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_ENCODING => '',
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        $html = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $ctype = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $err = curl_error($ch);
+        curl_close($ch);
+
+        if ($html !== false && $code >= 200 && $code < 400) {
+            if ($isProxy && stripos($ctype, 'application/json') !== false) {
+                $decoded = json_decode($html, true);
+                if (is_array($decoded) && !empty($decoded['html'])) {
+                    return [$decoded['html'], null];
+                }
+            }
+            return [$html, null];
+        }
+
+        return [null, $err !== '' ? $err : ('HTTP ' . $code)];
+    }
+
+    $ctx = stream_context_create([
+        'http' => [
+            'method' => 'GET',
+            'timeout' => 25,
+            'header' => implode("\r\n", $headers) . "\r\n",
+            'ignore_errors' => true,
+        ],
+    ]);
+
+    $html = @file_get_contents($url, false, $ctx);
+    if ($html === false || $html === '') {
+        return [null, 'fetch failed'];
+    }
+
+    if ($isProxy && isset($http_response_header)) {
+        foreach ($http_response_header as $header) {
+            if (stripos($header, 'content-type:') === 0 && stripos($header, 'application/json') !== false) {
+                $decoded = json_decode($html, true);
+                if (is_array($decoded) && !empty($decoded['html'])) {
+                    return [$decoded['html'], null];
+                }
+            }
+        }
+    }
+
+    return [$html, null];
+}
+
+function fetch_remote_chapter_html($chapterUrl) {
+    $urls = [];
+    $chapterUrl = rtrim((string)$chapterUrl, '/') . '/';
+    $urls[] = $chapterUrl;
+
+    if (preg_match('#/chapter-(\d+)/?$#i', $chapterUrl, $m)) {
+        $n = (int)$m[1];
+        $urls[] = preg_replace('#/chapter-\d+/?$#i', '/' . $n . '/', $chapterUrl);
+    } elseif (preg_match('#/(\d+)/?$#', $chapterUrl, $m)) {
+        $n = (int)$m[1];
+        $base = preg_replace('#/\d+/?$#', '/', $chapterUrl);
+        $urls[] = rtrim($base, '/') . '/chapter-' . $n . '/';
+    }
+
+    $urls = array_values(array_unique(array_filter($urls)));
+
+    $lastErr = null;
+    foreach ($urls as $url) {
+        list($proxyHtml, $proxyErr) = fetch_html_via_proxy($url);
+        if ($proxyHtml) {
+            return [$proxyHtml, null, 'proxy', $url];
+        }
+
+        list($directHtml, $directErr) = fetch_raw_html($url, false);
+        if ($directHtml) {
+            return [$directHtml, null, 'direct', $url];
+        }
+
+        $lastErr = $proxyErr ?: $directErr ?: 'fetch failed';
+    }
+
+    return [null, $lastErr ?: 'fetch failed', null, $chapterUrl];
+}
+
+function get_db_chapter(PDO $pdo, $novelId, $chapterNumber) {
+    $stmt = $pdo->prepare("SELECT * FROM novel_chapters WHERE novel_id = ? AND chapter_number = ? LIMIT 1");
+    $stmt->execute([$novelId, $chapterNumber]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+function upsert_chapter_row(PDO $pdo, $novelId, $chapterNumber, $title, $sourceUrl, $content = null) {
+    $existing = get_db_chapter($pdo, $novelId, $chapterNumber);
+    $writeDbContent = env_bool('NOVEL_WRITE_DB_CONTENT', false);
+
+    if ($existing) {
+        $fields = [];
+        $params = [];
+
+        if ($title && $title !== ($existing['title'] ?? '')) {
+            $fields[] = 'title = ?';
+            $params[] = $title;
+        }
+        if ($sourceUrl && $sourceUrl !== ($existing['source_url'] ?? '')) {
+            $fields[] = 'source_url = ?';
+            $params[] = $sourceUrl;
+        }
+        if ($writeDbContent && $content !== null && $content !== '' && empty($existing['content'])) {
+            $fields[] = 'content = ?';
+            $params[] = $content;
+        }
+
+        if ($fields) {
+            $params[] = $novelId;
+            $params[] = $chapterNumber;
+            $sql = 'UPDATE novel_chapters SET ' . implode(', ', $fields) . ' WHERE novel_id = ? AND chapter_number = ?';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+        }
+
+        return get_db_chapter($pdo, $novelId, $chapterNumber);
+    }
+
+    $insertContent = $writeDbContent ? $content : null;
+    $stmt = $pdo->prepare('INSERT INTO novel_chapters (novel_id, chapter_number, title, content, source_url) VALUES (?, ?, ?, ?, ?)');
+    $stmt->execute([$novelId, $chapterNumber, $title, $insertContent, $sourceUrl]);
+    return get_db_chapter($pdo, $novelId, $chapterNumber);
+}
+
+function build_chapter_list(PDO $pdo, array $novel) {
+    $stmt = $pdo->prepare('SELECT id, chapter_number, title, source_url FROM novel_chapters WHERE novel_id = ? ORDER BY chapter_number ASC');
+    $stmt->execute([$novel['id']]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $indexed = [];
+    $maxFromDb = 0;
+
+    foreach ($rows as $row) {
+        $num = (int)$row['chapter_number'];
+        $maxFromDb = max($maxFromDb, $num);
+        $indexed[$num] = [
+            'id' => (int)$row['id'],
+            'chapter_number' => $num,
+            'title' => $row['title'] ?: ('Chapter ' . $num),
+            'source_url' => $row['source_url'] ?: '',
+        ];
+    }
+
+    $declaredMax = max((int)($novel['latest_chapter'] ?? 0), (int)($novel['total_chapters'] ?? 0), $maxFromDb);
+    if ($declaredMax <= 0) {
+        return array_values($indexed);
+    }
+
+    $chapters = [];
+    for ($i = 1; $i <= $declaredMax; $i++) {
+        if (isset($indexed[$i])) {
+            $chapters[] = $indexed[$i];
+            continue;
+        }
+
+        $chapters[] = [
+            'id' => -1 * $i,
+            'chapter_number' => $i,
+            'title' => 'Chapter ' . $i,
+            'source_url' => '',
+        ];
+    }
+
+    return $chapters;
+}
+
+function compute_prev_next(PDO $pdo, array $novel, $chapterNumber) {
+    $chapterNumber = (int)$chapterNumber;
+    $novelId = (int)$novel['id'];
+
+    $prevStmt = $pdo->prepare('SELECT chapter_number FROM novel_chapters WHERE novel_id = ? AND chapter_number < ? ORDER BY chapter_number DESC LIMIT 1');
+    $prevStmt->execute([$novelId, $chapterNumber]);
+    $dbPrev = $prevStmt->fetchColumn();
+
+    $nextStmt = $pdo->prepare('SELECT chapter_number FROM novel_chapters WHERE novel_id = ? AND chapter_number > ? ORDER BY chapter_number ASC LIMIT 1');
+    $nextStmt->execute([$novelId, $chapterNumber]);
+    $dbNext = $nextStmt->fetchColumn();
+
+    $maxChapter = max((int)($novel['latest_chapter'] ?? 0), (int)($novel['total_chapters'] ?? 0));
+
+    $prev = $dbPrev !== false ? (int)$dbPrev : ($chapterNumber > 1 ? $chapterNumber - 1 : null);
+    $next = $dbNext !== false ? (int)$dbNext : (($maxChapter > 0 && $chapterNumber < $maxChapter) ? $chapterNumber + 1 : null);
+
+    return [$prev, $next];
+}
+
+function chapter_payload(array $novel, $chapterNumber, $title, $content, PDO $pdo) {
+    list($prev, $next) = compute_prev_next($pdo, $novel, $chapterNumber);
+    return [
+        'chapter_number' => (int)$chapterNumber,
+        'title' => $title ?: ('Chapter ' . $chapterNumber),
+        'content' => $content,
+        'prev' => $prev,
+        'next' => $next,
+    ];
+}
+
+if ($action === 'list') {
+    $page    = max(1, (int)($_GET['page'] ?? 1));
+    $limit   = 24;
+    $offset  = ($page - 1) * $limit;
+    $gender  = trim((string)($_GET['gender'] ?? ''));
+    $status  = trim((string)($_GET['status'] ?? ''));
+    $genre   = trim((string)($_GET['genre'] ?? ''));
+    $search  = trim((string)($_GET['search'] ?? ''));
+    $orderby = trim((string)($_GET['orderby'] ?? 'latest'));
+
+    $where = ['1=1'];
+    $params = [];
+
+    if ($gender !== '') {
+        $where[] = 'gender = ?';
+        $params[] = $gender;
+    }
+    if ($status !== '' && $status !== 'all') {
+        $where[] = 'status = ?';
+        $params[] = $status;
+    }
+    if ($genre !== '') {
+        $where[] = 'JSON_SEARCH(genres, "one", ?) IS NOT NULL';
+        $params[] = $genre;
+    }
+    if ($search !== '') {
+        $where[] = 'title LIKE ?';
+        $params[] = '%' . $search . '%';
+    }
+
+    $order = 'updated_at DESC';
+    if ($orderby === 'rating') {
+        $order = 'rating DESC';
+    } elseif ($orderby === 'chapters') {
+        $order = 'total_chapters DESC';
+    } elseif ($orderby === 'title') {
+        $order = 'title ASC';
+    }
+
+    $whereStr = implode(' AND ', $where);
+
+    $totalStmt = $pdo->prepare("SELECT COUNT(*) FROM novels WHERE {$whereStr}");
+    $totalStmt->execute($params);
+    $totalCount = (int)$totalStmt->fetchColumn();
+    $totalPages = max(1, (int)ceil($totalCount / $limit));
+
+    $stmt = $pdo->prepare("SELECT id, slug, title, source, poster_url, author, status, genres, gender, rating, total_chapters, latest_chapter FROM novels WHERE {$whereStr} ORDER BY {$order} LIMIT {$limit} OFFSET {$offset}");
+    $stmt->execute($params);
+    $novels = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($novels as &$novel) {
+        $novel['genres'] = json_decode($novel['genres'] ?? '[]', true) ?: [];
+        $novel['rating'] = (float)($novel['rating'] ?? 0);
+        $novel['total_chapters'] = (int)($novel['total_chapters'] ?? 0);
+        $novel['latest_chapter'] = (int)($novel['latest_chapter'] ?? 0);
+    }
+    unset($novel);
+
+    success([
+        'content' => $novels,
+        'pagination' => [
+            'page' => $page,
+            'pages' => $totalPages,
+            'total' => $totalCount,
+        ],
+    ]);
+}
+
+if ($action === 'detail') {
+    $slug = trim((string)($_GET['slug'] ?? ''));
+    if ($slug === '') {
+        error_response('Slug required');
+    }
+
+    $stmt = $pdo->prepare('SELECT * FROM novels WHERE slug = ? LIMIT 1');
+    $stmt->execute([$slug]);
+    $novel = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$novel) {
+        error_response('Novel not found', 404);
+    }
+
+    $novel['genres'] = json_decode($novel['genres'] ?? '[]', true) ?: [];
+    $novel['tags'] = json_decode($novel['tags'] ?? '[]', true) ?: [];
+    $novel['rating'] = (float)($novel['rating'] ?? 0);
+    $novel['total_chapters'] = (int)($novel['total_chapters'] ?? 0);
+    $novel['latest_chapter'] = (int)($novel['latest_chapter'] ?? 0);
+    $novel['chapters'] = build_chapter_list($pdo, $novel);
+
+    success($novel);
+}
+
+if ($action === 'chapter') {
+    $novelSlug = trim((string)($_GET['novel'] ?? $_GET['slug'] ?? ''));
+    $chapterNumber = (int)($_GET['chapter'] ?? 0);
+
+    if ($novelSlug === '' || $chapterNumber <= 0) {
+        error_response('Invalid params');
+    }
+
+    $stmt = $pdo->prepare('SELECT * FROM novels WHERE slug = ? LIMIT 1');
+    $stmt->execute([$novelSlug]);
+    $novel = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$novel) {
+        error_response('Novel not found', 404);
+    }
+
+    $novel['latest_chapter'] = (int)($novel['latest_chapter'] ?? 0);
+    $novel['total_chapters'] = (int)($novel['total_chapters'] ?? 0);
+
+    $cached = read_hot_cache($novelSlug, $chapterNumber);
+    if (is_array($cached) && !empty($cached['content'])) {
+        success(chapter_payload($novel, $chapterNumber, $cached['title'] ?? ('Chapter ' . $chapterNumber), $cached['content'], $pdo));
+    }
+
+    $fileCached = read_file_cache($novelSlug, $chapterNumber);
+    if (is_array($fileCached) && !empty($fileCached['content'])) {
+        write_hot_cache($novelSlug, $chapterNumber, $fileCached);
+        success(chapter_payload($novel, $chapterNumber, $fileCached['title'] ?? ('Chapter ' . $chapterNumber), $fileCached['content'], $pdo));
+    }
+
+    $dbChapter = get_db_chapter($pdo, (int)$novel['id'], $chapterNumber);
+    if ($dbChapter && !empty($dbChapter['content'])) {
+        $payload = [
+            'chapter_number' => $chapterNumber,
+            'title' => $dbChapter['title'] ?: ('Chapter ' . $chapterNumber),
+            'content' => $dbChapter['content'],
+            'source_url' => $dbChapter['source_url'] ?: build_chapter_url($novel, $chapterNumber),
+            'cached_at' => gmdate('c'),
+            'cache_source' => 'db',
+        ];
+        write_file_cache($novelSlug, $chapterNumber, $payload);
+        write_hot_cache($novelSlug, $chapterNumber, $payload);
+        success(chapter_payload($novel, $chapterNumber, $payload['title'], $payload['content'], $pdo));
+    }
+
+    $lock = acquire_chapter_lock($novelSlug, $chapterNumber);
+    if (!$lock) {
+        error_response('Failed to acquire chapter lock', 503);
+    }
+
+    try {
+        $fileCached = read_file_cache($novelSlug, $chapterNumber);
+        if (is_array($fileCached) && !empty($fileCached['content'])) {
+            write_hot_cache($novelSlug, $chapterNumber, $fileCached);
+            success(chapter_payload($novel, $chapterNumber, $fileCached['title'] ?? ('Chapter ' . $chapterNumber), $fileCached['content'], $pdo));
+        }
+
+        $dbChapter = get_db_chapter($pdo, (int)$novel['id'], $chapterNumber);
+        if ($dbChapter && !empty($dbChapter['content'])) {
+            $payload = [
+                'chapter_number' => $chapterNumber,
+                'title' => $dbChapter['title'] ?: ('Chapter ' . $chapterNumber),
+                'content' => $dbChapter['content'],
+                'source_url' => $dbChapter['source_url'] ?: build_chapter_url($novel, $chapterNumber),
+                'cached_at' => gmdate('c'),
+                'cache_source' => 'db',
+            ];
+            write_file_cache($novelSlug, $chapterNumber, $payload);
+            write_hot_cache($novelSlug, $chapterNumber, $payload);
+            success(chapter_payload($novel, $chapterNumber, $payload['title'], $payload['content'], $pdo));
+        }
+
+        $chapterUrl = $dbChapter['source_url'] ?? build_chapter_url($novel, $chapterNumber);
+        list($html, $fetchError, $fetchMode, $finalUrl) = fetch_remote_chapter_html($chapterUrl);
+
+        if (!$html) {
+            error_response('Gagal fetch chapter: ' . $fetchError, 502, ['chapter_url' => $chapterUrl]);
+        }
+
+        list($title, $content) = parse_chapter_payload($html, $chapterNumber);
+        $title = normalize_whitespace_text($title);
+        $content = sanitize_html_fragment($content);
+
+        if ($content === '' || strlen(strip_tags($content)) < 120) {
+            error_response('Chapter fetched but content empty / blocked', 502, ['chapter_url' => $chapterUrl, 'fetch_mode' => $fetchMode]);
+        }
+
+        $chapterUrl = $finalUrl ?: $chapterUrl;
+        upsert_chapter_row($pdo, (int)$novel['id'], $chapterNumber, $title, $chapterUrl, $content);
+
+        $payload = [
+            'chapter_number' => $chapterNumber,
+            'title' => $title,
+            'content' => $content,
+            'source_url' => $chapterUrl,
+            'cached_at' => gmdate('c'),
+            'cache_source' => $fetchMode ?: 'remote',
+        ];
+
+        write_file_cache($novelSlug, $chapterNumber, $payload);
+        write_hot_cache($novelSlug, $chapterNumber, $payload);
+
+        success(chapter_payload($novel, $chapterNumber, $title, $content, $pdo));
+    } finally {
+        release_chapter_lock($lock);
+    }
+}
+
+error_response('Invalid action', 404);

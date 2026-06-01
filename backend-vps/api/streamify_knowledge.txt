@@ -1,0 +1,3995 @@
+================================================================
+STREAMIFY — PESAN 5: ISI EXTEND MEMORY LENGKAP
+================================================================
+Ini adalah SEMUA isi memory Claude yang tersimpan untuk proyek ini.
+Terakhir diupdate: 23 Maret 2026
+================================================================
+
+================================================================
+MEMORY #1 — PROJECT OVERVIEW
+================================================================
+PROJECT: Streamify / PlayAll Stream — platform streaming all-in-one.
+Stack: React + TypeScript (Vite) frontend, PHP backend, MySQL DB.
+VPS utama: 194.62.248.102 (playall.me) — React + PHP + MySQL
+VPS kecil: 143.198.93.61 — khusus scraping otakudesu (IP utama diblock)
+VPS manga: mangaserver.playall.me (157.245.196.252) — proxy manga kiryuu
+Domain: playall.me
+GitHub: https://github.com/Senjakun/streamify-now
+DB: streamify_db, user: streamify_user, pass: rimbamobile2
+JWT: 089c01c76039b35d54fb1f04034b023b84674277a50e0c8eefd1e2ffb7445cc4
+
+================================================================
+MEMORY #2 — REACT HOOKS RULE
+================================================================
+REACT: Hooks (useState/useEffect) HARUS semua dideklarasikan SEBELUM
+conditional return. Urutan wajib: hooks → conditional return → JSX utama.
+Hooks setelah return = React error #310 (Rules of Hooks violation).
+
+BENAR:
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  if (loading) return <Spinner />;  ← boleh di sini
+  return <div>{data}</div>;
+
+SALAH (error #310):
+  const [data, setData] = useState(null);
+  if (!data) return null;  ← conditional return dulu
+  const [loading, setLoading] = useState(true);  ← hooks SETELAH return = ERROR
+
+================================================================
+MEMORY #3 — PHP TIMEOUT RULE
+================================================================
+PHP: file_get_contents WAJIB pakai timeout:
+  $ctx = stream_context_create(['http'=>['timeout'=>15]]);
+  $html = file_get_contents($url, false, $ctx);
+Tanpa timeout = script stuck selamanya kalau URL lambat/tidak respond.
+Recommended timeout: 15 detik (10 untuk scraper cepat).
+
+================================================================
+MEMORY #4 — OTAKUDESU EPISODE SLUG
+================================================================
+OTAKUDESU: Episode slug TIDAK bisa diprediksi dari anime slug!
+Contoh: anime "devil-crybaby" → episode "devlmn-crby-episode-1-sub-indo"
+Tidak ada pola yang konsisten. SELALU ambil slug episode dari scraping
+halaman /anime/{slug}/ di otakudesu. JANGAN generate sendiri.
+
+================================================================
+MEMORY #5 — OTAKUDESU IP BLOCK
+================================================================
+OTAKUDESU: otakudesu.blog memblock IP VPS utama (194.62.248.102).
+Semua request ke otakudesu HARUS lewat VPS kecil (143.198.93.61).
+Flow: Frontend → VPS Utama API → VPS Kecil (143.198.93.61) → otakudesu.blog
+
+================================================================
+MEMORY #6 — PHP ACTION HANDLER PATTERN
+================================================================
+PHP: Setiap action handler HARUS diakhiri exit. Jangan http_response_code() di tengah.
+  if ($action === 'list') {
+    echo json_encode($result);
+    exit;  ← WAJIB
+  }
+  echo json_encode(['error'=>'Invalid action']); // di paling bawah
+
+Fungsi helper standar:
+  function success($data) { echo json_encode(['success'=>true,'data'=>$data]); exit; }
+  function error($msg)    { echo json_encode(['success'=>false,'error'=>$msg]); exit; }
+
+================================================================
+MEMORY #7 — SHELL HEREDOC RULE
+================================================================
+SHELL: nohup php << 'EOF' TIDAK JALAN (heredoc inline di terminal).
+Solusi benar:
+  cat > /tmp/script.php << 'PHPEOF'
+  <?php // kode PHP
+  PHPEOF
+  nohup php /tmp/script.php > /var/log/xxx.log 2>&1 &
+shell_exec() jalan sebagai www-data. Log file harus chmod 666.
+
+================================================================
+MEMORY #8 — DB EPISODE RULES
+================================================================
+DB: INSERT IGNORE untuk semua INSERT episode.
+UNIQUE KEY unique_episode(content_id, episode_number) di tabel episodes.
+Donghua: type='donghua' di tabel content.
+Rating: min(float(rating), 9.9) → DECIMAL(3,1).
+
+================================================================
+MEMORY #9 — GIT & PYTHON EDIT DEBUG
+================================================================
+GIT VPS kecil push pertama: git push origin main --force
+Python edit PHP — kalau NOT FOUND debug dulu:
+  idx = content.find("kata kunci")
+  print(repr(content[idx:idx+200]))
+→ Lihat exact whitespace/newline sebelum replace
+
+================================================================
+MEMORY #10 — OTAKUDESU SCRAPER FLOW
+================================================================
+Anime scraper flow:
+  GET /anime-list.php → semua slug → GET /anime/{slug}/ → episode slugs
+  → GET /play/{episode-slug}/ → parse embed
+Source video: server1.playall.me
+Poster regex: otakudesu.blog/wp-content/uploads/ (jpg|png|webp)
+Fix poster: /var/www/streamify/app/backend-vps/scraper/fix-poster.php
+
+================================================================
+MEMORY #11 — UPDATE EPISODES CRONJOB
+================================================================
+update-episodes.php:
+- Hanya status='ongoing', ORDER BY updated_at ASC, LIMIT 50
+- Update updated_at=NOW() setelah setiap anime
+- Sleep 1 detik antar anime
+VPS kecil: fetch /anime/{slug}/ (BUKAN /lengkap/{slug}/)
+
+================================================================
+MEMORY #12 — OTAKUDESU EMBED DECODE
+================================================================
+Otakudesu embed: data-content = base64 JSON {"id":..., "i":0, "q":"480p"}
+  1. Decode base64 → json_decode → ambil post id
+  2. POST /wp-admin/admin-ajax.php: action=player_ajax&post={id}
+  3. Response.data juga base64 → decode lagi → dapat video URL
+Episode slug regex: preg_match('/episode[- ](\d+)/i', $slug, $matches)
+
+================================================================
+MEMORY #13 — ANICHIN.MOE DONGHUA
+================================================================
+ANICHIN.MOE: Tidak ada halaman list lengkap.
+Cara: loop /page/N/ → extract episode URL → strip "-episode-N-..." → series slug
+Series URL: /slug/ (TANPA /anime/ prefix!)
+Episode: /{episode-slug}-subtitle-indonesia/
+ok.ru = server paling reliable untuk video donghua.
+
+================================================================
+MEMORY #14 — SCRAPER BEST PRACTICES
+================================================================
+PHP: if(!$html) continue;  Python: try/except per item
+Sleep 1-2 detik antar request. Log dengan flush=True/fflush.
+Jalankan nohup, monitor tail -f.
+animexin.dev: DITINGGALKAN (limit 10 series, no pagination).
+
+================================================================
+MEMORY #15 — MANGA PROXY SYSTEM
+================================================================
+manga-proxy.php: /var/www/streamify/app/backend-vps/api/
+VPS manga: mangaserver.playall.me (157.245.196.252)
+Flow: VPS Utama → VPS Manga → v1.kiryuu.to
+Actions: list, detail, chapters, chapter, image, register, search
+Chapters: fetch langsung dari VPS utama ke v1.kiryuu.to/wp-admin/admin-ajax.php
+Image proxy WAJIB: Referer: https://v1.kiryuu.to/ (hotlink protection)
+
+================================================================
+MEMORY #16 — MANGA STATUS & TODO
+================================================================
+Manga: realtime proxy jalan, 280 halaman (~5600+ manga).
+Search: mangaserver/?s={query}
+TODO BELUM SELESAI:
+- Label manhwa/manhua/manga tidak tampil di MangaPage card
+- Genre filter belum ada
+- Tombol Update Terbaru belum ada
+- MangaDetailPage: genre, rating, type badge belum tampil
+
+================================================================
+MEMORY #17 — SHORT DRAMA FILE STRUCTURE
+================================================================
+SHORT DRAMA FILES:
+  shortdrama-proxy.php      ← Router utama (require_once semua handler)
+  shortdrama-melolo.php     ← Melolo (?code=KEY)
+  shortdrama-velolo.php     ← Velolo, DramaBox, DramaBite, Reelife (?apikey=KEY)
+  shortdrama-stardusttv.php ← StardustTV (?code=KEY)
+  shortdrama-netshort.php   ← NetShort (?code=KEY, lang=in!)
+  subtitle-proxy.php        ← SRT→VTT converter
+
+API Key semua source: 0CCE84D6FBB6017B63BBE84083AE78D0
+Route: /shortdrama dan /shortdrama/:id?source=xxx
+PERHATIAN: /shortdrama BUKAN /short-drama!
+
+================================================================
+MEMORY #18 — SHORT DRAMA SOURCES ENDPOINTS
+================================================================
+MELOLO (melolo.dramabos.my.id) — auth: ?code=KEY:
+  /api/home?lang=id&offset=N  /api/detail/:id  /api/video/:vid  /api/search?q=
+
+VELOLO (velolo.dramabos.my.id) — auth: ?apikey=KEY:
+  /home?page&page_size  /drama/:id  /search?q=  /labels  /hot  /new  /category?labelId=
+
+STARDUSTTV (stardusttv.dramabos.my.id) — auth: ?code=KEY:
+  /v1/list?page  /v1/detail/:slug/:id  /v1/detail/:slug/:id/episode/:ep  /v1/find?q=
+
+NETSHORT (netshort.dramabos.my.id) — auth: ?code=KEY, lang=in:
+  /api/list/:page  /api/drama/:id  /api/watch/:id/:ep  /api/search?q=
+
+================================================================
+MEMORY #19 — SHORT DRAMA VIDEO PER SOURCE
+================================================================
+MELOLO: Detail → videos[{vid}] → fetch /api/video/:vid → {url, list:[{definition,url}]}
+VELOLO: Detail → episodesInfo.rows[{videoAddress, zimu}] → URL LANGSUNG
+STARDUSTTV: Detail → episodes dict {'1':{h264,h265}} → URL via /stream?url=
+NETSHORT: fetch /api/watch/:id/:ep → {videoUrl, subtitles:[{lang:id_ID,url}]}
+
+VELOLO SUBTITLE: zimu = .id.srt URL (ada karakter China di path)
+  → subtitle-proxy.php: encode non-ASCII → fetch → convert SRT→VTT
+  React: '/api/subtitle-proxy.php?url=' + encodeURIComponent(zimuUrl)
+  SINGLE encode saja (double encode tidak bekerja)
+
+================================================================
+MEMORY #20 — SHORT DRAMA TODO
+================================================================
+1. NetShort search cuma 1 item karena ID bentrok → prefix "ns_" di shortPlayId
+2. DramaBite search endpoint belum dicek
+3. Reelife search endpoint belum dicek
+4. Genre filter tidak konsisten (Velolo: API, lainnya: hardcode)
+5. DramaBox: skip, API error (kata developer)
+6. Short Drama section belum ada di homepage
+
+================================================================
+MEMORY #21 — SHORT DRAMA UI DETAILS
+================================================================
+ShortDramaPage.tsx:
+  - Banner auto-scroll 5 detik (prev/next arrow, dot indicator)
+  - 7 source buttons dengan warna unik per platform
+  - Tab: Beranda | Hot | Terbaru
+  - Genre filter horizontal scroll
+  - List 1 kolom landscape (poster kiri, info kanan)
+  - Muat Lebih button
+
+ShortDramaDetailPage.tsx:
+  - loadVideo(vid, ep, directUrl?, directSubtitle?) function
+  - Kalau directUrl ada → set langsung, tidak fetch endpoint video
+  - <video> dengan <track> untuk subtitle
+  - Episode grid, server selector (quality)
+
+subtitle-proxy.php:
+  - $_GET auto-decode URL → karakter China sudah di URL
+  - preg_replace_callback encode non-ASCII di URL
+  - Convert SRT→VTT: ganti koma jadi titik di timestamp
+  - Content-Type: text/vtt; charset=utf-8
+
+================================================================
+MEMORY #22 — SHORT DRAMA FILE PATHS
+================================================================
+PHP: /var/www/streamify/app/backend-vps/api/shortdrama-*.php
+React: /var/www/streamify/app/src/pages/ShortDrama*.tsx
+Route: App.tsx → /shortdrama + /shortdrama/:id
+
+PERHATIAN: Bug pernah terjadi: require_once duplikat 4x di proxy.php
+Selalu cek: grep "require_once" shortdrama-proxy.php
+
+================================================================
+MEMORY #23 — NETSHORT FIELDS
+================================================================
+NETSHORT field names (berbeda dari semua source lain!):
+  shortPlayId    ← ID (bukan 'id')
+  shortPlayName  ← Judul (bukan 'name'/'title')
+  shortPlayCover ← Cover (bukan 'cover'/'poster')
+  maxOffset/maxEps ← Total episode
+  labelArray     ← Genre array
+  isNewLabel, heatScoreShow
+
+Search hasil: data.searchCodeSearchResult (BUKAN simpleSearchResult)
+Watch: data.{videoUrl, subtitles:[{lang:'id_ID', url}]}
+Code check: in_array($d['code'], [0, 200]) karena NetShort pakai 200
+Lang: in (lang=in, BUKAN lang=id)
+
+================================================================
+MEMORY #24 — STARDUSTTV FIELDS
+================================================================
+STARDUSTTV:
+List: data[{id, slug, title, poster, plays_num, episode, intro}]
+ID di proxy: "slug|id" (pipe separator) contoh: "mahkota-dendam-sang-ratu|17689"
+
+Detail episodes BUKAN array, tapi DICT string-key:
+  {'1':{h264:'...',h265:'...'}, '2':{...}}
+Iterate: foreach ($data['episodes'] as $ep_num => $val)
+  usort untuk sort by episode number
+
+Video URL: stardusttv.dramabos.my.id/stream?url={actual_url_with_chinese_chars}
+
+================================================================
+MEMORY #25 — VELOLO FIELDS
+================================================================
+VELOLO:
+List rows: {id, name, cover, introduction, episode, label[], collections, shelfTime, totalDuration}
+  'name' bukan 'title', 'introduction' bukan 'synopsis'
+  'episode' = jumlah episode (integer)
+  code: 200
+
+Detail data.videoInfo.{name, cover, introduction} ← INFO DI SINI (bukan dramaInfo!)
+Detail data.episodesInfo.rows[{id, orderNumber, videoAddress, zimu, isLock}]
+  orderNumber = 0-based → episode number = orderNumber + 1
+  videoAddress = URL langsung HLS
+  zimu = URL subtitle .srt (ada karakter China di path)
+
+Labels: [{id, label}] — ID panjang numerik string
+
+================================================================
+MEMORY #26 — ANIME SYSTEM
+================================================================
+ANIME: DB-based scraping dari otakudesu via VPS kecil.
+Tabel: content(type='anime') + episodes(UNIQUE unique_episode)
+get-embed.php flow: VPS utama → VPS kecil → otakudesu → decode base64 2x → filter iklan
+Filter iklan server: vidhide, filedon, pdrain, ondesu
+iframe: TANPA sandbox attribute (kalau pakai sandbox → video tidak bisa play!)
+
+================================================================
+MEMORY #27 — CRONJOBS
+================================================================
+0 3 * * *  manga-update.php   ← Update manga dari kiryuu
+0 3 * * 0  fix-poster.php     ← Fix poster anime kosong (tiap Minggu)
+0 4 * * *  donghua-update.php ← Update donghua baru dari anichin (3 page)
+0 6 * * *  update-episodes.php ← Update anime ongoing (50/run)
+Semua di: /var/www/streamify/app/backend-vps/scraper/
+Log: /var/log/{nama-script}.log
+
+================================================================
+MEMORY EXTRA — RESPONSE FORMAT PERBEDAAN (KRITIS)
+================================================================
+content.php  → LANGSUNG: {content:[...], total:N}   → json.content
+novel.php    → WRAPPER:  {success:true, data:{novels:[...]}} → json.data.novels
+shortdrama-proxy.php → WRAPPER: {success:true, data:{content:[]}} → json.data.content
+manga-proxy.php → WRAPPER: {success:true, data:[...]} → json.data
+
+SERING JADI BUG! Jangan tertukar.
+
+================================================================
+MEMORY EXTRA — DONGHUA SLUG CONFLICT
+================================================================
+Manga "martial-master" dan donghua "martial-master" punya slug sama.
+Fix: Donghua pakai slug "martial-master-donghua" (suffix -donghua).
+content.php fallback: kalau type='donghua' tidak ketemu, coba slug+'-donghua'.
+
+DonghuaDetailPage.tsx:
+  setContentId(res.id) langsung dari DB response.
+  History save via useEffect saat contentId ready.
+  Description decode HTML entities via textarea.innerHTML trick.
+
+================================================================
+MEMORY EXTRA — COMMENT SECTION BUG FIX
+================================================================
+CommentSection.tsx: ada guard if (!contentId) return null;
+Tanpa guard → fetch komentar dengan contentId=0 → semua komentar terambil.
+Pastikan guard ini ada!
+
+================================================================
+MEMORY EXTRA — NOVEL SYSTEM
+================================================================
+Novel source: sonicmtl.com. 481 novel. Lazy load chapter.
+novel.php response: {success:true, data:{...}} → PAKAI WRAPPER
+Strip ads: preg_replace VDO.AI script/div tags
+DB: novels + novel_chapters (content NULL = belum di-fetch)
+Reader: theme (dark/light/sepia), fontSize (A-/A+), tap untuk hide UI
+Paragraf: split('\n\n') → map ke <p>
+
+Stats: 24762+ chapter terisi (3 novel fully scraped):
+  Bringing The Farm ~16000ch, Beastmaster ~7266ch, Beast Taming ~1496ch
+
+Novel scraper background:
+  nohup python3 /tmp/novel_chapters_scrape.py > /var/log/novel_chapters.log 2>&1 &
+  Monitor: tail -5 /var/log/novel_chapters.log
+
+================================================================
+MEMORY EXTRA — BUILD & DEPLOY
+================================================================
+cd /var/www/streamify/app
+npm run build 2>&1 | grep -E "ERROR|error TS|✓|built" | tail -5
+cp -r dist/* /var/www/streamify/public/
+
+Test API:
+  curl -s "https://playall.me/api/xxx.php?action=yyy" | python3 -c "import sys,json; print(json.load(sys.stdin))"
+
+Monitor:
+  tail -f /var/log/update-episodes.log
+  mysql -u streamify_user -primbamobile2 streamify_db -e "SELECT type,COUNT(*) FROM content GROUP BY type;"
+
+================================================================
+MEMORY EXTRA — VELOLO LABELS (GENRE IDs)
+================================================================
+1952199012360286210=Modern, 2029830464115306497=Isekai
+2029464877006581761=Republik, 2018579512817348609=Perkotaan
+1962801025007693825=Fantasi, 1962792421575831554=Misteri
+1952210206907330562=Lainnya, 1952210076644831234=Zaman Kuno
+1952208848087052290=Kriminal, 1927286649303785473=Romantis
+1932989959738408961=Dendam, 1932989685112160258=Ortu-Anak
+1932987786363322369=Lahir Baru, 1932987639692705793=Keluarga
+1932987545379586049=Pedesaan, 1932987499770724354=Pernikahan
+1932987136132956162=Pendekar, 1932986598821642241=Kerajaan
+
+================================================================
+MEMORY EXTRA — SUMBER DATA SUMMARY
+================================================================
+Anime:       otakudesu.blog → scraping → DB (~2000+ series)
+Donghua:     anichin.moe → scraping → DB (438 series, 15170 eps)
+Manga:       v1.kiryuu.to via mangaserver (8000+ realtime proxy)
+Novel:       sonicmtl.com lazy load (481 novel, 24762+ chapters)
+Short Drama: 6 API sources (Melolo, Velolo, StardustTV, NetShort, DramaBite, Reelife)
+             DramaBox: skip sementara (API error)
+
+================================================================
+END PESAN 5 — EXTEND MEMORY LENGKAP
+================================================================
+
+
+================================================================
+PROMPT UNTUK CLAUDE BARU — STREAMIFY / PLAYALL STREAM
+================================================================
+Copy-paste seluruh isi file ini sebagai pesan pertama ke Claude baru.
+================================================================
+
+Halo Claude! Kamu adalah asisten developer untuk proyek **Streamify (PlayAll Stream)**.
+Baca semua konteks ini dengan seksama sebelum menjawab apapun.
+
+================================================================
+SIAPA SAYA & APA PROYEKNYA
+================================================================
+
+Saya developer/owner dari PlayAll Stream (playall.me) — platform streaming
+all-in-one gratis bahasa Indonesia yang menggabungkan:
+- 🎌 Anime (2000+ series)
+- 🐉 Donghua / Animasi China (438 series)
+- 📚 Manga / Manhwa / Manhua (8000+)
+- 📖 Novel (481 novel, lazy load chapter)
+- 🎬 Short Drama (7 platform sumber)
+
+Semua konten gratis, tanpa iklan, bahasa Indonesia.
+
+================================================================
+INFRASTRUKTUR
+================================================================
+
+VPS UTAMA: 194.62.248.102 / playall.me
+  - Stack: React + TypeScript (Vite) + PHP + MySQL
+  - RAM 8GB, Storage 49GB
+  - DB: streamify_db, user: streamify_user, pass: rimbamobile2
+  - JWT: 089c01c76039b35d54fb1f04034b023b84674277a50e0c8eefd1e2ffb7445cc4
+
+VPS KECIL: 143.198.93.61 (tanpa domain)
+  - KHUSUS scraping otakudesu.blog
+  - Kenapa? Otakudesu BLOCK IP VPS utama
+  - Flow: Frontend → VPS Utama API → VPS Kecil → otakudesu.blog
+
+VPS MANGA: mangaserver.playall.me (157.245.196.252)
+  - KHUSUS proxy manga dari v1.kiryuu.to
+
+GitHub: https://github.com/Senjakun/streamify-now
+
+================================================================
+PATH PENTING DI SERVER
+================================================================
+
+Frontend: /var/www/streamify/app/src/pages/
+API PHP:  /var/www/streamify/app/backend-vps/api/
+Scraper:  /var/www/streamify/app/backend-vps/scraper/
+Public:   /var/www/streamify/public/ (hasil build di-copy ke sini)
+
+BUILD COMMAND (WAJIB setelah edit React):
+  cd /var/www/streamify/app
+  npm run build 2>&1 | grep -E "ERROR|error TS|✓|built" | tail -5
+  cp -r dist/* /var/www/streamify/public/
+
+================================================================
+ATURAN KODING YANG TIDAK BOLEH DILANGGAR
+================================================================
+
+REACT:
+1. Semua hooks (useState/useEffect/useCallback/useRef) HARUS dideklarasi
+   SEBELUM conditional return apapun → kalau tidak = React Error #310
+2. JANGAN pakai <form> tags, gunakan onClick/onChange
+3. Hanya Tailwind core utility classes (tidak ada compiler custom)
+4. Default export untuk semua page component
+
+PHP:
+1. file_get_contents WAJIB pakai timeout:
+   $ctx = stream_context_create(['http'=>['timeout'=>15]]);
+2. Setiap action handler WAJIB diakhiri exit
+3. INSERT IGNORE untuk semua insert episode
+4. array_filter → harus array_values() agar JSON tidak jadi object {}
+5. NetShort code check: in_array($d['code'], [0, 200]) karena pakai 200
+
+SHELL:
+1. nohup php << 'EOF' TIDAK JALAN
+   Solusi: cat > /tmp/script.php << 'PHPEOF' ... PHPEOF
+           nohup php /tmp/script.php > /var/log/xxx.log 2>&1 &
+
+PYTHON EDIT PHP:
+1. Kalau replace NOT FOUND → debug dulu:
+   idx = content.find("kata kunci")
+   print(repr(content[idx:idx+200]))
+
+================================================================
+SITUASI MASA LAMPAU (APA YANG SUDAH DIKERJAKAN)
+================================================================
+
+FASE 1 — ANIME & DONGHUA:
+✅ Scraping 2000+ anime dari otakudesu.blog → simpan ke DB
+✅ Scraping 438 donghua dari anichin.moe → simpan ke DB
+✅ Embed player anime: decode base64 2x dari otakudesu
+✅ Embed player donghua: realtime dari anichin
+✅ Fix iframe anime: HAPUS sandbox attribute (kalau ada sandbox → video tidak play!)
+✅ Filter server iklan: vidhide, filedon, pdrain, ondesu
+✅ Fix title duplikat "Episode 1 - Episode 1"
+✅ Fix synopsis HTML entities (&#8211; dll)
+✅ Fix slug conflict: manga "martial-master" vs donghua "martial-master-donghua"
+✅ content.php support filter ?type= agar tidak bentrok slug
+✅ Cronjob: update-episodes.php (ongoing anime, 50/run, jam 06:00)
+✅ Cronjob: donghua-update.php (3 page terbaru anichin, jam 04:00)
+✅ Cronjob: fix-poster.php (tiap Minggu jam 03:00)
+
+FASE 2 — MANGA:
+✅ manga-proxy.php: realtime proxy dari v1.kiryuu.to via VPS manga
+✅ Actions: list (280 halaman), detail, chapters, chapter, image, register, search
+✅ Image proxy dengan Referer header (bypass hotlink protection kiryuu)
+✅ Chapters via admin-ajax.php kiryuu langsung
+✅ Register manga ke DB untuk bookmark/history
+✅ Search via mangaserver/?s=
+✅ 8000+ manga tersedia
+✅ Cronjob: manga-update.php (jam 03:00 harian)
+
+FASE 3 — NOVEL:
+✅ 481 novel dari sonicmtl.com di DB
+✅ Sistem lazy load chapter (ambil dari sonicmtl saat user baca, simpan ke DB)
+✅ Strip iklan VDO.AI dari konten chapter
+✅ Novel reader: theme dark/light/sepia, font size A-/A+, chapter sidebar
+✅ Tap layar untuk hide/show UI (immersive reading)
+✅ Paragraf render: split('\n\n') → <p> tags
+✅ Novel chapter scraper (background): 5 parallel, 1 detik/batch
+   Status: 3 novel fully scraped (Bringing The Farm 16000ch, Beastmaster 7266ch, Beast Taming 1496ch)
+   Sisanya lazy load saat user baca
+
+FASE 4 — SHORT DRAMA:
+✅ 7 sumber API terintegrasi:
+   - Melolo (melolo.dramabos.my.id) — MP4 multi-resolusi, subtitle
+   - Velolo (velolo.dramabos.my.id) — HLS m3u8, subtitle .srt Indonesia
+   - StardustTV (stardusttv.dramabos.my.id) — h264/h265 via /stream?url=
+   - NetShort (netshort.dramabos.my.id) — MP4, subtitle id_ID
+   - DramaBite (dramabite.dramabos.my.id) — struktur Velolo
+   - Reelife (reelife.dramabos.my.id) — struktur Velolo
+   - DramaBox → SKIP sementara (API error, kata developer)
+   Key semua: 0CCE84D6FBB6017B63BBE84083AE78D0
+✅ Route: /shortdrama (list) dan /shortdrama/:id?source=xxx (detail)
+✅ UI: banner auto-scroll, source buttons, tab Beranda/Hot/Terbaru, genre filter
+✅ Layout 1 kolom landscape (poster kiri, info kanan)
+✅ Player HTML5 dengan subtitle track
+✅ subtitle-proxy.php: convert .srt → .vtt, handle karakter China di path
+✅ Search all: gabung Melolo + Velolo + StardustTV + NetShort
+
+================================================================
+SITUASI SAAT INI (23 MARET 2026)
+================================================================
+
+SHORT DRAMA:
+⚠️ NetShort search masuk hanya 1 item (ID bentrok di deduplication)
+   → Fix: pastikan shortPlayId unik, prefix "ns_" kalau perlu
+⚠️ DramaBite search belum dicek endpoint-nya
+⚠️ Reelife search belum dicek endpoint-nya
+⚠️ Genre filter tidak konsisten (Velolo: dari API /labels, lainnya: hardcode)
+⚠️ DotDrama (platform ke-7) BELUM diintegrasikan sama sekali
+   URL docs: https://dotdrama.dramabos.my.id/api.html
+❌ Section short drama belum ada di homepage
+
+MANGA:
+❌ Label manhwa/manhua/manga tidak tampil di card list
+❌ Genre filter belum ada di MangaPage
+❌ Tombol "Update Terbaru" belum ada
+❌ MangaDetailPage: genre, rating, type badge belum tampil
+
+NOVEL:
+❌ Novel source female/romance belum ada
+❌ Search novel hanya dari DB (novel belum pernah dibuka tidak muncul)
+
+DONGHUA:
+⚠️ Beberapa donghua poster masih kosong atau tidak sesuai
+⚠️ Genre filter donghua tidak akurat (data di DB kurang akurat)
+
+================================================================
+RENCANA MASA DEPAN
+================================================================
+
+PRIORITAS TINGGI (segera):
+1. Fix NetShort search ID bentrok
+2. Cek DramaBite & Reelife search endpoint
+3. Tambah section Short Drama di homepage
+4. Integrasikan DotDrama (platform ke-7)
+5. Fix manga: label type + genre filter
+
+PRIORITAS MENENGAH:
+6. DramaBox integrasi (tunggu API fix dari developer)
+7. Novel: tambah source female/romance
+8. Short drama detail page lebih bagus (info lengkap)
+9. Search novel realtime dari sonicmtl
+
+PRIORITAS RENDAH / MASA DEPAN:
+10. PWA (install di HP)
+11. Push notification untuk episode baru
+12. Rekomendasi personal dari history
+13. Novel sumber lain untuk female genre
+
+================================================================
+DETAIL TEKNIS SHORT DRAMA — SANGAT PENTING
+================================================================
+
+FILE STRUKTUR:
+  shortdrama-proxy.php      ← Router (require semua handler, CEGAH DUPLIKAT!)
+  shortdrama-melolo.php     ← Handler Melolo
+  shortdrama-velolo.php     ← Handler Velolo, DramaBox, DramaBite, Reelife
+  shortdrama-stardusttv.php ← Handler StardustTV (ID format: slug|id)
+  shortdrama-netshort.php   ← Handler NetShort (lang=in!, code 200!)
+  subtitle-proxy.php        ← SRT→VTT + encode karakter China
+
+AUTH PER SOURCE:
+  Melolo:     ?code=KEY
+  Velolo dll: ?apikey=KEY
+  StardustTV: ?code=KEY
+  NetShort:   ?code=KEY, lang=in (bukan lang=id!)
+
+FIELD NAMES YANG BERBEDA (jangan sampai salah):
+  Melolo list:   book_id, book_name, thumb_url, abstract, serial_count
+  Melolo search: id, name, cover, intro, episodes  ← BEDA dari list!
+  Velolo:        id, name, cover, introduction, episode, label[]
+  Velolo detail: data.videoInfo.{name,cover} ← bukan dramaInfo!
+                 episodesInfo.rows[{videoAddress, zimu}]
+                 orderNumber = 0-based, episode = orderNumber + 1
+  StardustTV:    id, slug, title, poster, episode
+                 detail.episodes = DICT {'1':{h264,h265}, '2':...} BUKAN ARRAY!
+  NetShort:      shortPlayId, shortPlayName, shortPlayCover (BUKAN id/name/cover!)
+                 search → data.searchCodeSearchResult (bukan simpleSearchResult!)
+                 watch → data.{videoUrl, subtitles:[{lang:'id_ID', url}]}
+
+VIDEO LOADING LOGIC:
+  Melolo:     vid ada di detail → fetch /api/video/:vid → dapat URL
+  Velolo:     videoAddress langsung dari episodesInfo.rows → set langsung
+  StardustTV: h264/h265 dari episodes dict → set langsung
+  NetShort:   fetch /api/watch/:id/:ep → dapat videoUrl
+
+SUBTITLE VELOLO:
+  zimu field = URL ke .id.srt dengan karakter China di path
+  → subtitle-proxy.php: preg_replace_callback encode non-ASCII
+  → convert SRT ke VTT: ganti koma → titik di timestamp
+  → React: encodeURIComponent(subtitleUrl) sekali saja
+
+RESPONSE FORMAT PERBEDAAN (SERING JADI BUG!):
+  content.php  → LANGSUNG: {content:[...], total:N}
+  novel.php    → WRAPPER: {success:true, data:{novels:[...]}}
+  shortdrama   → WRAPPER: {success:true, data:{content:[...]}}
+  manga-proxy  → WRAPPER: {success:true, data:[...]}
+
+================================================================
+DETAIL TEKNIS ANIME
+================================================================
+
+FLOW EMBED:
+  1. Frontend → get-embed.php (VPS utama)
+  2. VPS utama forward → VPS kecil (143.198.93.61)
+  3. VPS kecil fetch /play/{episode-slug}/ dari otakudesu
+  4. Parse data-content (base64 JSON {"id":..., "i":0, "q":"480p"})
+  5. Decode → POST ke /wp-admin/admin-ajax.php
+  6. Response base64 → decode lagi → dapat server list
+  7. Filter: vidhide, filedon, pdrain, ondesu DIBLOKIR
+  8. iframe TANPA sandbox attribute!
+
+EPISODE SLUG: TIDAK bisa diprediksi dari anime slug!
+  "devil-crybaby" → "devlmn-crby-episode-1-sub-indo"
+  Selalu ambil dari scraping halaman anime.
+
+CRONJOB:
+  0 6 * * * update-episodes.php (ongoing, 50/run, order updated_at ASC, sleep 1s)
+  0 4 * * * donghua-update.php (3 page terbaru anichin)
+  0 3 * * * manga-update.php
+  0 3 * * 0 fix-poster.php
+
+================================================================
+DETAIL TEKNIS MANGA
+================================================================
+
+IMAGE PROXY: WAJIB Referer: https://v1.kiryuu.to/ untuk bypass hotlink
+CHAPTERS: POST langsung ke v1.kiryuu.to/wp-admin/admin-ajax.php
+          data: action=ajax_chap&post={post_id}
+SEARCH: mangaserver.playall.me/?s={query}
+REGISTER: simpan manga ke DB agar bisa bookmark/history
+
+================================================================
+DETAIL TEKNIS NOVEL
+================================================================
+
+LAZY LOAD FLOW:
+  1. User buka chapter → novel.php cek DB
+  2. Ada konten? → return dari DB (cepat)
+  3. Tidak ada? → fetch sonicmtl → strip ads → simpan → return
+
+NOVEL.PHP RESPONSE: {success:true, data:{...}} ← PAKAI WRAPPER
+STRIP ADS: preg_replace VDO.AI script/div tags dari konten
+CHAPTER URL: https://www.sonicmtl.com/novel/{slug}/chapter-{N}/
+
+================================================================
+CATATAN KHUSUS YANG SERING DILUPAKAN
+================================================================
+
+1. Velolo labelId untuk genre filter (dari /labels endpoint):
+   Modern=1952199012360286210, Romantis=1927286649303785473
+   Dendam=1932989959738408961, Pernikahan=1932987499770724354
+   Fantasi=1962801025007693825, Misteri=1962792421575831554
+   Kerajaan=1932986598821642241, Zaman Kuno=1952210076644831234
+   dll (18 label total dari API)
+
+2. shortdrama-proxy.php PERNAH kena bug duplicate require_once (4x)
+   Selalu cek: grep "require_once" shortdrama-proxy.php
+
+3. Route: /shortdrama BUKAN /short-drama (sudah pernah bikin 404)
+
+4. Donghua "martial-master" → slug di DB = "martial-master-donghua"
+   content.php ada fallback: kalau tidak ketemu, coba slug+'-donghua'
+
+5. CommentSection.tsx: WAJIB ada guard if (!contentId) return null;
+   Tanpa ini → fetch komentar dengan contentId=0
+
+6. Melolo auth: pakai ?code=KEY (BUKAN ?apikey= atau Bearer!)
+   Bearer token tidak work untuk endpoint video Melolo
+
+7. StardustTV ID: format "slug|id" (pipe separator)
+   Contoh: "mahkota-dendam-sang-ratu|17689"
+
+8. NetShort lang=in (Indonesian code di NetShort) bukan lang=id
+
+9. DotDrama (7th platform) belum diintegrasikan sama sekali
+
+10. Novel chapter scraper: pakai cloudscraper Python library
+    (bukan requests biasa) untuk bypass Cloudflare sonicmtl
+
+================================================================
+CARA KERJA SAMA YANG BENAR
+================================================================
+
+Setiap kali saya minta tolong:
+1. Kamu langsung paham konteks tanpa saya jelaskan ulang
+2. Kalau ada yang tidak yakin, tanya SATU pertanyaan saja
+3. Edit file via SSH/bash tools yang tersedia
+4. Setelah edit PHP → langsung jalan (tidak perlu build)
+5. Setelah edit React → WAJIB npm run build + cp dist
+6. Selalu test dengan curl setelah edit API
+7. Kalau Python replace NOT FOUND → print repr() dulu untuk debug
+
+Saya akan sering kasih perintah langsung seperti:
+- "Fix NetShort search"
+- "Tambah genre filter manga"
+- "Cek log update-episodes"
+
+Dan kamu langsung eksekusi tanpa perlu tanya ulang konteks.
+
+================================================================
+SITUASI SAAT INI — LANGKAH PERTAMA
+================================================================
+
+Setelah kamu baca ini, tunggu instruksi dari saya.
+Kalau ada file-file ringkasan (streamify_summary_1.txt sampai 2b.txt)
+yang saya kirim, baca juga untuk detail lebih lengkap.
+
+Kamu siap! 🚀
+================================================================
+
+
+================================================================
+STREAMIFY — PESAN 4: SEMUA LOGIKA KODING LENGKAP
+================================================================
+Ini adalah dump lengkap semua logika koding yang pernah dikerjakan.
+Tujuan: Claude baru bisa langsung debug/extend tanpa tanya-tanya lagi.
+================================================================
+
+================================================================
+SECTION 1: PHP BACKEND — RULES & PATTERNS
+================================================================
+
+--- PATTERN DASAR SEMUA PHP API ---
+
+<?php
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+
+// Helper functions
+function success($data) { 
+    echo json_encode(['success' => true, 'data' => $data]); 
+    exit;  // WAJIB exit setelah echo
+}
+function error($msg) { 
+    echo json_encode(['success' => false, 'error' => $msg]); 
+    exit;  // WAJIB exit setelah echo
+}
+
+// Fetch dengan timeout — SELALU PAKAI INI
+function fetchUrl($url, $timeout = 15) {
+    $ctx = stream_context_create([
+        'http' => [
+            'timeout' => $timeout,
+            'header' => "User-Agent: Mozilla/5.0\r\n"
+        ]
+    ]);
+    $r = @file_get_contents($url, false, $ctx);
+    return $r ? json_decode($r, true) : null;
+}
+
+$action = $_GET['action'] ?? 'list';
+
+if ($action === 'list') {
+    // ... proses ...
+    success($result);
+    // exit sudah di dalam success()
+}
+
+if ($action === 'detail') {
+    // ... proses ...
+    success($result);
+}
+
+// Ini di paling bawah
+error('Invalid action');
+
+--- POLA FETCH HTML (scraping) ---
+
+function fetchHtml($url) {
+    $ctx = stream_context_create([
+        'http' => [
+            'timeout' => 15,
+            'header' => implode("\r\n", [
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept: text/html,application/xhtml+xml",
+                "Accept-Language: id-ID,id;q=0.9,en-US;q=0.8",
+                "Referer: https://otakudesu.blog/"
+            ])
+        ]
+    ]);
+    return @file_get_contents($url, false, $ctx);
+}
+
+--- INSERT IGNORE PATTERN ---
+
+// SELALU pakai INSERT IGNORE untuk episode (scraper bisa jalan berulang)
+$sql = "INSERT IGNORE INTO episodes 
+        (content_id, episode_number, slug, embed_url) 
+        VALUES (?, ?, ?, ?)";
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$content_id, $ep_num, $slug, $embed_url]);
+
+-- Tabel episodes punya:
+-- UNIQUE KEY unique_episode(content_id, episode_number)
+
+--- ARRAY VALUES SETELAH FILTER ---
+
+// SELALU pakai array_values() setelah array_filter()
+// Kalau tidak → JSON encode jadi object {} bukan array []
+$filtered = array_values(array_filter($items, function($item) {
+    return $item['active'] === true;
+}));
+
+--- DECODE BASE64 DOUBLE (OTAKUDESU) ---
+
+// Step 1: data-content attribute = base64 JSON
+$data_content = // ambil dari HTML parsing
+$decoded1 = base64_decode($data_content);
+$json1 = json_decode($decoded1, true);
+$post_id = $json1['id'];
+
+// Step 2: AJAX request ke otakudesu
+$ajax_url = "https://otakudesu.blog/wp-admin/admin-ajax.php";
+$post_data = http_build_query([
+    'action' => 'player_ajax',
+    'post' => $post_id,
+    'i' => 0,
+    'q' => '480p'
+]);
+$ctx = stream_context_create(['http' => [
+    'method' => 'POST',
+    'header' => "Content-Type: application/x-www-form-urlencoded\r\nReferer: https://otakudesu.blog/\r\n",
+    'content' => $post_data,
+    'timeout' => 15
+]]);
+$response = @file_get_contents($ajax_url, false, $ctx);
+
+// Step 3: Response juga base64!
+$json_response = json_decode($response, true);
+$decoded2 = base64_decode($json_response['data']);
+$final_data = json_decode($decoded2, true);
+// $final_data berisi video URL / iframe URL
+
+--- RATING DECIMAL ---
+
+// Rating dari source sering > 9.9, tabel pakai DECIMAL(3,1)
+$rating = min((float)$raw_rating, 9.9);
+// INSERT sebagai DECIMAL, bukan float
+
+================================================================
+SECTION 2: CONTENT.PHP — ANIME & DONGHUA API
+================================================================
+
+--- RESPONSE FORMAT content.php ---
+// content.php TIDAK pakai wrapper success/data
+// Return langsung, beda dengan novel.php!
+
+// list action:
+echo json_encode([
+    'content' => $items,  // array of content
+    'total' => $total,
+    'page' => $page,
+    'per_page' => $per_page
+]);
+
+// detail action:
+echo json_encode([
+    'id' => $id,
+    'title' => $title,
+    'slug' => $slug,
+    'type' => $type,
+    'status' => $status,
+    'rating' => $rating,
+    'year' => $year,
+    'poster' => $poster,
+    'synopsis' => $synopsis,
+    'episodes' => [
+        ['id' => ..., 'episode_number' => ..., 'slug' => ..., 'embed_url' => ...],
+        ...
+    ]
+]);
+
+--- QUERY LIST CONTENT ---
+
+$where = ["1=1"];
+$params = [];
+
+if ($type) {
+    $where[] = "type = ?";
+    $params[] = $type;
+}
+if ($status) {
+    $where[] = "status = ?";
+    $params[] = $status;
+}
+if ($search) {
+    $where[] = "title LIKE ?";
+    $params[] = "%$search%";
+}
+
+$where_str = implode(" AND ", $where);
+$offset = ($page - 1) * $per_page;
+
+$sql = "SELECT * FROM content WHERE $where_str 
+        ORDER BY updated_at DESC 
+        LIMIT $per_page OFFSET $offset";
+
+--- FILTER TYPE DONGHUA VS ANIME ---
+
+// Donghua: type='donghua'
+// Anime: type='anime'
+// Manga: type='manga' atau 'manhwa' atau 'manhua'
+
+// Kalau ada slug conflict (contoh: martial-master ada di manga dan donghua):
+// Donghua pakai slug: martial-master-donghua
+
+// Di content.php action=detail:
+// Kalau tidak ketemu dengan slug biasa, coba slug + '-donghua'
+$result = $pdo->query("SELECT * FROM content WHERE slug = ? AND type = ?", [$slug, 'donghua']);
+if (!$result) {
+    $result = $pdo->query("SELECT * FROM content WHERE slug = ? AND type = ?", [$slug.'-donghua', 'donghua']);
+}
+
+================================================================
+SECTION 3: GET-EMBED.PHP — LOGIKA LENGKAP
+================================================================
+
+--- FLOW GET-EMBED.PHP ---
+
+// VPS Utama menerima request:
+GET /api/get-embed.php?slug={episode-slug}
+
+// Kalau request dari VPS utama → forward ke VPS kecil
+if (!$is_vps_kecil) {
+    $vps_kecil_url = "http://143.198.93.61/api/get-embed.php?slug=" . urlencode($slug);
+    $result = fetchUrl($vps_kecil_url);
+    echo json_encode($result);
+    exit;
+}
+
+// Di VPS kecil:
+// 1. Fetch halaman play
+$play_url = "https://otakudesu.blog/play/" . $slug . "/";
+$html = fetchHtml($play_url);
+
+// 2. Parse data-content dari HTML
+preg_match('/data-content="([^"]+)"/', $html, $matches);
+$data_content = $matches[1];
+
+// 3. Decode base64 pertama
+$json1 = json_decode(base64_decode($data_content), true);
+$post_id = $json1['id'];
+
+// 4. AJAX request
+$response = post_to_otakudesu($post_id);
+
+// 5. Decode base64 kedua
+$servers = decode_response($response);
+
+// 6. Filter server iklan
+$blacklist = ['vidhide', 'filedon', 'pdrain', 'ondesu'];
+$servers = array_filter($servers, function($server) use ($blacklist) {
+    $name = strtolower($server['name'] ?? '');
+    foreach ($blacklist as $blocked) {
+        if (strpos($name, $blocked) !== false) return false;
+    }
+    return true;
+});
+$servers = array_values($servers);
+
+// 7. Fix title duplikat
+foreach ($servers as &$server) {
+    $server['title'] = preg_replace('/^(.+)\s*-\s*\1$/i', '$1', $server['title'] ?? '');
+}
+
+// 8. Return
+success(['servers' => $servers, 'title' => $title]);
+
+--- EPISODE SLUG REGEX ---
+
+// Dari URL episode: https://otakudesu.blog/play/devlmn-crby-episode-1-sub-indo/
+// Ambil nomor episode:
+preg_match('/episode[- ](\d+)/i', $slug, $matches);
+$episode_number = (int)$matches[1]; // = 1
+
+// TIDAK BISA predict slug dari anime slug!
+// "devil-crybaby" → "devlmn-crby-episode-1-sub-indo" (pola berbeda!)
+// Harus selalu scrape dari halaman anime untuk dapat episode slug
+
+================================================================
+SECTION 4: UPDATE-EPISODES.PHP — CRONJOB LOGIKA
+================================================================
+
+<?php
+// update-episodes.php
+// Jalan setiap hari jam 6 pagi
+// Hanya update anime yang status='ongoing'
+
+$pdo = new PDO(...);
+
+// Ambil 50 anime ongoing yang paling lama di-update
+$stmt = $pdo->query(
+    "SELECT id, slug FROM content 
+     WHERE type='anime' AND status='ongoing' 
+     ORDER BY updated_at ASC 
+     LIMIT 50"
+);
+$animes = $stmt->fetchAll();
+
+foreach ($animes as $anime) {
+    // Fetch episode list dari otakudesu via VPS kecil
+    $url = "http://143.198.93.61/api/get-episodes.php?slug=" . $anime['slug'];
+    $result = fetchUrl($url);
+    
+    if (!$result || !isset($result['episodes'])) {
+        // Skip kalau gagal, update updated_at tetap
+        $pdo->execute("UPDATE content SET updated_at=NOW() WHERE id=?", [$anime['id']]);
+        sleep(1);
+        continue;
+    }
+    
+    // Insert episode baru (INSERT IGNORE untuk skip duplikat)
+    foreach ($result['episodes'] as $ep) {
+        $pdo->prepare("INSERT IGNORE INTO episodes (content_id, episode_number, slug, embed_url) VALUES (?,?,?,?)")
+            ->execute([$anime['id'], $ep['number'], $ep['slug'], $ep['embed_url']]);
+    }
+    
+    // Update timestamp
+    $pdo->prepare("UPDATE content SET updated_at=NOW() WHERE id=?")->execute([$anime['id']]);
+    
+    // WAJIB sleep agar tidak spam otakudesu
+    sleep(1);
+}
+
+// Di VPS kecil, get-episodes.php:
+// Fetch /anime/{slug}/ dari otakudesu
+// Parse HTML → ambil semua link episode
+// Return array episode dengan slug dan nomor
+
+================================================================
+SECTION 5: NOVEL.PHP — LOGIKA LENGKAP
+================================================================
+
+--- RESPONSE FORMAT novel.php ---
+// novel.php PAKAI wrapper {success, data}!
+// Berbeda dengan content.php yang return langsung!
+
+function success($data) {
+    echo json_encode(['success' => true, 'data' => $data]);
+    exit;
+}
+
+// Di React/Frontend:
+// fetch('/api/novel.php?action=list')
+//   .then(r => r.json())
+//   .then(res => {
+//     const novels = res.data.novels; // AKSES .data dulu!
+//   })
+
+--- ACTION=LIST ---
+
+$page = max(1, (int)($_GET['page'] ?? 1));
+$gender = $_GET['gender'] ?? '';
+$status = $_GET['status'] ?? '';
+$genre = $_GET['genre'] ?? '';
+$search = $_GET['search'] ?? '';
+$orderby = $_GET['orderby'] ?? 'updated_at';
+
+$where = ["1=1"];
+$params = [];
+
+if ($gender) { $where[] = "gender = ?"; $params[] = $gender; }
+if ($status) { $where[] = "status = ?"; $params[] = $status; }
+if ($genre) { $where[] = "genre LIKE ?"; $params[] = "%$genre%"; }
+if ($search) { $where[] = "title LIKE ?"; $params[] = "%$search%"; }
+
+$offset = ($page - 1) * 24;
+$sql = "SELECT id, title, slug, cover, gender, status, genre, total_chapters 
+        FROM novels 
+        WHERE " . implode(" AND ", $where) . "
+        ORDER BY $orderby DESC
+        LIMIT 24 OFFSET $offset";
+
+$novels = $pdo->prepare($sql)->execute($params)->fetchAll();
+success(['novels' => $novels, 'page' => $page, 'total' => $total]);
+
+--- ACTION=DETAIL ---
+
+$slug = $_GET['slug'] ?? '';
+$novel = $pdo->prepare("SELECT * FROM novels WHERE slug = ?")->execute([$slug])->fetch();
+
+if (!$novel) error('Novel not found');
+
+// Ambil chapter list (hanya nomor dan judul, bukan konten)
+$chapters = $pdo->prepare(
+    "SELECT chapter_number, title FROM novel_chapters 
+     WHERE novel_id = ? ORDER BY chapter_number ASC"
+)->execute([$novel['id']])->fetchAll();
+
+success(['novel' => $novel, 'chapters' => $chapters]);
+
+--- ACTION=CHAPTER (LAZY LOAD) ---
+
+$slug = $_GET['slug'] ?? '';
+$chapter_num = (int)($_GET['chapter'] ?? 1);
+
+// Ambil novel ID dari slug
+$novel = $pdo->prepare("SELECT id, source_url FROM novels WHERE slug = ?")->execute([$slug])->fetch();
+
+// Cek DB dulu
+$chapter = $pdo->prepare(
+    "SELECT * FROM novel_chapters 
+     WHERE novel_id = ? AND chapter_number = ?"
+)->execute([$novel['id'], $chapter_num])->fetch();
+
+if ($chapter && $chapter['content']) {
+    // Sudah ada di DB, return langsung
+    success(['chapter' => $chapter]);
+    // exit sudah di dalam success()
+}
+
+// Belum ada → fetch dari sonicmtl
+$chapter_url = buildSonicMtlUrl($novel['source_url'], $chapter_num);
+$html = fetchHtml($chapter_url);
+
+if (!$html) error('Gagal fetch chapter');
+
+// Parse konten dari HTML
+$content = parseChapterContent($html);
+
+// Strip iklan VDO.AI
+$content = stripAds($content);
+
+// Decode HTML entities
+$content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+// Simpan ke DB untuk request berikutnya
+if ($chapter) {
+    // Update yang ada (content masih NULL)
+    $pdo->prepare("UPDATE novel_chapters SET content = ? WHERE id = ?")
+        ->execute([$content, $chapter['id']]);
+} else {
+    // Insert baru
+    $pdo->prepare(
+        "INSERT INTO novel_chapters (novel_id, chapter_number, title, content, source_url) 
+         VALUES (?, ?, ?, ?, ?)"
+    )->execute([$novel['id'], $chapter_num, $title, $content, $chapter_url]);
+}
+
+success(['chapter' => ['chapter_number' => $chapter_num, 'title' => $title, 'content' => $content]]);
+
+--- STRIP ADS FUNCTION ---
+
+function stripAds($content) {
+    // Strip VDO.AI script tags
+    $content = preg_replace('/<script[^>]*vdo\.ai[^>]*>.*?<\/script>/si', '', $content);
+    $content = preg_replace('/<script[^>]*VideoAd[^>]*>.*?<\/script>/si', '', $content);
+    
+    // Strip div container iklan
+    $content = preg_replace('/<div[^>]*id="[^"]*vdo[^"]*"[^>]*>.*?<\/div>/si', '', $content);
+    
+    // Strip semua script tags (aman untuk novel content)
+    $content = preg_replace('/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/si', '', $content);
+    
+    return trim($content);
+}
+
+================================================================
+SECTION 6: MANGA-PROXY.PHP — LOGIKA LENGKAP
+================================================================
+
+--- FETCH KE VPS MANGA ---
+
+function fetchManga($path) {
+    $base = 'https://mangaserver.playall.me';
+    $url = $base . $path;
+    $ctx = stream_context_create(['http' => [
+        'timeout' => 15,
+        'header' => "User-Agent: Mozilla/5.0\r\nReferer: https://v1.kiryuu.to/\r\n"
+    ]]);
+    return @file_get_contents($url, false, $ctx);
+}
+
+--- ACTION=LIST ---
+
+$page = max(1, (int)($_GET['page'] ?? 1));
+$type = $_GET['type'] ?? ''; // manga/manhwa/manhua
+$genre = $_GET['genre'] ?? '';
+$status = $_GET['status'] ?? '';
+$orderby = $_GET['orderby'] ?? '';
+
+// Build URL ke mangaserver
+$params = "?page=$page";
+if ($type) $params .= "&type=$type";
+if ($genre) $params .= "&genre=$genre";
+if ($status) $params .= "&status=$status";
+
+$html = fetchManga($params);
+
+// Parse HTML response dari kiryuu/mangaserver
+// Mangaserver return HTML biasa, perlu parse DOM
+$items = parseMangaList($html);
+
+success(['content' => $items, 'page' => $page]);
+
+--- ACTION=DETAIL ---
+
+$slug = $_GET['slug'] ?? '';
+$html = fetchManga("/$slug/");
+$detail = parseMangaDetail($html);
+success($detail);
+
+--- ACTION=CHAPTERS ---
+
+// Chapters fetch langsung dari kiryuu admin-ajax (bukan lewat VPS manga!)
+$post_id = $_GET['post_id'] ?? '';
+
+$ajax_url = "https://v1.kiryuu.to/wp-admin/admin-ajax.php";
+$post_data = http_build_query([
+    'action' => 'ajax_chap',
+    'post' => $post_id
+]);
+$ctx = stream_context_create(['http' => [
+    'method' => 'POST',
+    'header' => "Content-Type: application/x-www-form-urlencoded\r\nReferer: https://v1.kiryuu.to/\r\n",
+    'content' => $post_data,
+    'timeout' => 15
+]]);
+$response = @file_get_contents($ajax_url, false, $ctx);
+$chapters = json_decode($response, true);
+
+success(['chapters' => $chapters]);
+
+--- ACTION=IMAGE (PROXY GAMBAR) ---
+
+$img_url = $_GET['url'] ?? '';
+
+// Validasi URL
+if (!str_starts_with($img_url, 'https://')) error('Invalid URL');
+
+// Fetch gambar dengan Referer kiryuu
+$ctx = stream_context_create(['http' => [
+    'timeout' => 30,
+    'header' => implode("\r\n", [
+        "User-Agent: Mozilla/5.0",
+        "Referer: https://v1.kiryuu.to/",  // WAJIB untuk bypass hotlink
+        "Accept: image/webp,image/apng,image/*"
+    ])
+]]);
+$image = @file_get_contents($img_url, false, $ctx);
+
+if (!$image) {
+    http_response_code(404);
+    exit;
+}
+
+// Detect content type
+$finfo = new finfo(FILEINFO_MIME_TYPE);
+$mime = $finfo->buffer($image);
+
+header("Content-Type: $mime");
+header("Cache-Control: public, max-age=86400");
+echo $image;
+exit;
+
+--- ACTION=SEARCH ---
+
+$q = $_GET['q'] ?? '';
+if (!$q) error('Query required');
+
+// Search pakai WordPress search di mangaserver
+$html = fetchManga("/?s=" . urlencode($q));
+$results = parseMangaList($html); // Sama dengan parse list biasa
+
+success(['content' => $results]);
+
+--- ACTION=REGISTER ---
+
+$slug = $_GET['slug'] ?? '';
+
+// Cek sudah ada di DB
+$existing = $pdo->prepare("SELECT id FROM content WHERE slug = ? AND type IN ('manga','manhwa','manhua')")
+    ->execute([$slug])->fetch();
+    
+if ($existing) {
+    success(['id' => $existing['id'], 'registered' => false]);
+}
+
+// Fetch detail dari proxy
+$html = fetchManga("/$slug/");
+$detail = parseMangaDetail($html);
+
+// Insert ke DB
+$pdo->prepare(
+    "INSERT INTO content (title, slug, type, status, rating, poster, synopsis, updated_at) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())"
+)->execute([
+    $detail['title'], $slug, $detail['type'] ?? 'manga',
+    $detail['status'] ?? '', $detail['rating'] ?? 0,
+    $detail['cover'], $detail['synopsis'] ?? ''
+]);
+
+$new_id = $pdo->lastInsertId();
+success(['id' => $new_id, 'registered' => true]);
+
+================================================================
+SECTION 7: SHORT DRAMA — LOGIKA LENGKAP SEMUA HANDLER
+================================================================
+
+--- shortdrama-proxy.php STRUCTURE ---
+
+<?php
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+
+// Require SEKALI saja (jangan duplikat!)
+require_once __DIR__ . '/shortdrama-melolo.php';
+require_once __DIR__ . '/shortdrama-velolo.php';
+require_once __DIR__ . '/shortdrama-stardusttv.php';
+require_once __DIR__ . '/shortdrama-netshort.php';
+
+function success($data) { echo json_encode(['success' => true, 'data' => $data]); exit; }
+function error($msg)    { echo json_encode(['success' => false, 'error' => $msg]); exit; }
+
+$action = $_GET['action'] ?? 'list';
+$source = $_GET['source'] ?? 'melolo';
+
+// Definisi grup source
+$velolo_sources = ['velolo', 'dramabox', 'dramabite', 'reelife'];
+// NetShort dan StardustTV punya handler sendiri
+
+// Router berdasarkan action
+if ($action === 'list') { ... }
+if ($action === 'detail') { ... }
+if ($action === 'video') { ... }
+if ($action === 'search') { ... }
+if ($action === 'hot') { ... }
+if ($action === 'new') { ... }
+if ($action === 'category') { ... }
+if ($action === 'labels') { ... }
+
+error('Invalid action');
+
+--- ROUTING LIST ---
+
+if ($action === 'list') {
+    $page   = max(1, (int)($_GET['page'] ?? 1));
+    $offset = max(0, (int)($_GET['offset'] ?? 0));
+    $label  = $_GET['label'] ?? '';
+
+    if ($source === 'all') {
+        // Sample dari semua source
+        $all = [];
+        $r = melolo_list(0);
+        if ($r) $all = array_merge($all, array_slice($r['content'], 0, 5));
+        foreach (['velolo','dramabox','dramabite','reelife'] as $src) {
+            $r = velolo_list($src, 1);
+            if ($r) $all = array_merge($all, array_slice($r['content'], 0, 5));
+        }
+        $r = stardust_list(1);
+        if ($r) $all = array_merge($all, array_slice($r['content'], 0, 5));
+        $r = netshort_list(1);
+        if ($r) $all = array_merge($all, array_slice($r['content'], 0, 5));
+        shuffle($all);
+        success(['content' => $all, 'has_more' => false]);
+    }
+
+    if ($source === 'melolo') {
+        $r = melolo_list($offset);
+        if (!$r) error('Gagal fetch Melolo');
+        success($r);
+    }
+
+    if (in_array($source, $velolo_sources)) {
+        $r = velolo_list($source, $page, $label);
+        if (!$r) error("Gagal fetch $source");
+        success($r);
+    }
+
+    if ($source === 'stardusttv') {
+        $r = stardust_list($page);
+        if (!$r) error('Gagal fetch StardustTV');
+        success($r);
+    }
+
+    if ($source === 'netshort') {
+        $r = netshort_list($page);
+        if (!$r) error('Gagal fetch NetShort');
+        success($r);
+    }
+}
+
+--- ROUTING DETAIL ---
+
+if ($action === 'detail') {
+    $id = $_GET['id'] ?? '';
+    if (!$id) error('ID required');
+
+    if ($source === 'melolo') {
+        $r = melolo_detail($id);
+        if (!$r) error('Gagal fetch detail Melolo');
+        success($r);
+    }
+
+    if ($source === 'netshort') {
+        $r = netshort_detail($id);
+        if (!$r) error('Gagal fetch detail NetShort');
+        success($r);
+    }
+
+    if ($source === 'stardusttv') {
+        // StardustTV ID format: "slug|id"
+        $parts = explode('|', $id);
+        $slug = $parts[0] ?? $id;
+        $sid  = $parts[1] ?? $id;
+        $r = stardust_detail($slug, $sid);
+        if (!$r) error('Gagal fetch detail StardustTV');
+        success($r);
+    }
+
+    // Default: velolo dan velolo-type
+    $src = in_array($source, $velolo_sources) ? $source : 'velolo';
+    $r = velolo_detail($src, $id);
+    if (!$r) error("Gagal fetch detail $src");
+    success($r);
+}
+
+--- ROUTING VIDEO ---
+
+if ($action === 'video') {
+    $vid = $_GET['vid'] ?? '';
+    $url = $_GET['url'] ?? ''; // Untuk velolo yang sudah punya URL langsung
+
+    if ($source === 'melolo') {
+        $r = melolo_video($vid);
+        if (!$r) error('Gagal fetch video');
+        success($r);
+    }
+
+    if ($source === 'netshort') {
+        // vid format: "id|ep"
+        $parts = explode('|', $vid);
+        $r = netshort_video($parts[0], $parts[1] ?? 1);
+        if (!$r) error('Gagal fetch video NetShort');
+        success($r);
+    }
+
+    // StardustTV — vid format: "slug|id|ep"
+    if ($source === 'stardusttv' || str_contains($vid, '|')) {
+        $parts = explode('|', $vid);
+        $r = stardust_video($parts[0], $parts[1], $parts[2] ?? 1);
+        if (!$r) error('Gagal fetch video StardustTV');
+        success($r);
+    }
+
+    // Velolo — URL sudah ada langsung
+    if ($url) {
+        success(['url' => $url, 'servers' => [['label' => '480p', 'url' => $url]]]);
+    }
+
+    error('URL video tidak tersedia');
+}
+
+--- ROUTING SEARCH ALL ---
+
+if ($action === 'search') {
+    $q = $_GET['q'] ?? '';
+    if (!$q) error('Query required');
+    
+    $all = [];
+    $seen_ids = [];
+
+    // Helper untuk tambah ke all tanpa duplikat
+    $addItems = function($items) use (&$all, &$seen_ids) {
+        foreach ($items as $item) {
+            $id = (string)($item['id'] ?? '');
+            if ($id && !in_array($id, $seen_ids)) {
+                $all[] = $item;
+                $seen_ids[] = $id;
+            }
+        }
+    };
+
+    // Melolo
+    $r = melolo_search($q);
+    if ($r) $addItems($r['content']);
+
+    // NetShort
+    $r = netshort_search($q);
+    if ($r) $addItems($r['content']);
+
+    // StardustTV
+    $r = stardust_search($q);
+    if ($r) $addItems($r['content']);
+
+    // Velolo
+    $r = velolo_search('velolo', $q);
+    if ($r) $addItems($r['content']);
+
+    success(['content' => $all, 'total' => count($all)]);
+}
+
+--- shortdrama-melolo.php FUNCTIONS ---
+
+$MELOLO_CODE = '0CCE84D6FBB6017B63BBE84083AE78D0';
+$MELOLO_BASE = 'https://melolo.dramabos.my.id';
+
+function melolo_fetch($path) {
+    global $MELOLO_CODE, $MELOLO_BASE;
+    $sep = strpos($path, '?') !== false ? '&' : '?';
+    $url = "$MELOLO_BASE$path{$sep}lang=id&code=$MELOLO_CODE";
+    $ctx = stream_context_create(['http' => ['timeout' => 15]]);
+    $r = @file_get_contents($url, false, $ctx);
+    return $r ? json_decode($r, true) : null;
+}
+
+function melolo_list($offset = 0) {
+    $d = melolo_fetch("/api/home?offset=$offset");
+    if (!$d || $d['code'] !== 0) return null;
+    
+    $books = [];
+    foreach ($d['data']['cell']['cell_data'] ?? [] as $cell) {
+        foreach ($cell['books'] ?? [] as $book) {
+            // Parse genre dari category_info (JSON string!)
+            $genres = [];
+            $cat = json_decode($book['category_info'] ?? '[]', true) ?: [];
+            foreach ($cat as $c) {
+                if ($c['MainCategory'] ?? false) $genres[] = $c['Name'];
+            }
+            $books[] = [
+                'id'       => $book['book_id'],
+                'title'    => $book['book_name'],
+                'cover'    => $book['thumb_url'],
+                'synopsis' => $book['abstract'],
+                'episodes' => (int)($book['serial_count'] ?? 0),
+                'genres'   => $genres,
+                'is_hot'   => ($book['is_hot'] ?? '') === '1',
+                'is_new'   => ($book['is_new_book'] ?? '') === '1',
+                'source'   => 'melolo',
+            ];
+        }
+    }
+    return [
+        'content'     => $books,
+        'has_more'    => $d['data']['has_more'] ?? false,
+        'next_offset' => $d['data']['next_offset'] ?? $offset + 20
+    ];
+}
+
+function melolo_detail($id) {
+    $d = melolo_fetch("/api/detail/$id");
+    if (!$d || $d['code'] !== 0) return null;
+    
+    $videos = [];
+    foreach ($d['videos'] ?? [] as $ep) {
+        $videos[] = [
+            'episode'  => (int)$ep['episode'],
+            'vid'      => $ep['vid'],
+            'duration' => (int)$ep['duration'],
+            'url'      => '',       // Melolo tidak punya direct URL
+            'subtitle' => '',
+        ];
+    }
+    return [
+        'id'       => $d['id'] ?? $id,
+        'title'    => $d['title'] ?? '',
+        'cover'    => $d['cover'] ?? '',
+        'synopsis' => $d['intro'] ?? '',
+        'episodes' => (int)($d['episodes'] ?? 0),
+        'videos'   => $videos,
+        'source'   => 'melolo',
+    ];
+}
+
+function melolo_video($vid) {
+    $d = melolo_fetch("/api/video/$vid");
+    if (!$d || isset($d['error'])) return null;
+    
+    $servers = [];
+    foreach ($d['list'] ?? [] as $item) {
+        $servers[] = ['label' => $item['definition'], 'url' => $item['url']];
+    }
+    
+    // Default 480p
+    $default_url = '';
+    foreach ($servers as $s) {
+        if ($s['label'] === '480p') { $default_url = $s['url']; break; }
+    }
+    if (!$default_url && count($servers)) $default_url = end($servers)['url'];
+    
+    return [
+        'url'     => $default_url,
+        'backup'  => $d['backup'] ?? '',
+        'servers' => $servers,
+    ];
+}
+
+function melolo_search($q, $offset = 0) {
+    $d = melolo_fetch("/api/search?q=" . urlencode($q) . "&offset=$offset");
+    if (!$d || $d['code'] !== 0) return null;
+    
+    $books = [];
+    foreach ($d['data'] ?? [] as $book) {
+        $books[] = [
+            'id'       => $book['id'],
+            'title'    => $book['name'],     // field 'name' bukan 'title'!
+            'cover'    => $book['cover'],
+            'synopsis' => $book['intro'],    // field 'intro' bukan 'synopsis'!
+            'episodes' => (int)($book['episodes'] ?? 0),
+            'source'   => 'melolo',
+        ];
+    }
+    return ['content' => $books, 'has_more' => $d['has_more'] ?? false, 'total' => $d['count'] ?? 0];
+}
+
+--- shortdrama-velolo.php FUNCTIONS ---
+
+$VELOLO_APIKEY = '0CCE84D6FBB6017B63BBE84083AE78D0';
+$VELOLO_BASES = [
+    'velolo'   => 'https://velolo.dramabos.my.id',
+    'dramabox' => 'https://dramabox.dramabos.my.id',
+    'dramabite'=> 'https://dramabite.dramabos.my.id',
+    'reelife'  => 'https://reelife.dramabos.my.id',
+];
+
+function velolo_fetch($source, $path) {
+    global $VELOLO_APIKEY, $VELOLO_BASES;
+    if (!isset($VELOLO_BASES[$source])) return null;
+    $base = $VELOLO_BASES[$source];
+    $sep = strpos($path, '?') !== false ? '&' : '?';
+    $url = "$base$path{$sep}apikey=$VELOLO_APIKEY&lang=id";
+    $ctx = stream_context_create(['http' => ['timeout' => 15]]);
+    $r = @file_get_contents($url, false, $ctx);
+    return $r ? json_decode($r, true) : null;
+}
+
+function velolo_parse_item($item, $source) {
+    return [
+        'id'       => $item['id'],
+        'title'    => $item['name'],
+        'cover'    => $item['cover'],
+        'synopsis' => $item['introduction'] ?? '',
+        'episodes' => (int)($item['episode'] ?? 0),
+        'genres'   => $item['label'] ?? [],
+        'is_hot'   => ($item['collections'] ?? 0) > 10,
+        'is_new'   => strtotime($item['shelfTime'] ?? '') > strtotime('-7 days'),
+        'duration' => $item['totalDuration'] ?? '',
+        'source'   => $source,
+    ];
+}
+
+function velolo_list($source, $page = 1, $label = '') {
+    $path = "/home?page=$page&page_size=20";
+    if ($label) $path .= "&labelId=$label";
+    $d = velolo_fetch($source, $path);
+    if (!$d || ($d['code'] ?? 0) != 200) return null;
+    
+    $books = [];
+    foreach ($d['rows'] ?? [] as $item) $books[] = velolo_parse_item($item, $source);
+    $total = $d['total'] ?? 0;
+    return ['content' => $books, 'total' => $total, 'has_more' => ($page * 20) < $total];
+}
+
+function velolo_detail($source, $id) {
+    $d = velolo_fetch($source, "/drama/$id");
+    if (!$d || ($d['code'] ?? 0) != 200) return null;
+    $data = $d['data'] ?? [];
+    
+    // Field 'videoInfo' bukan 'dramaInfo'!
+    $info = $data['videoInfo'] ?? $data['dramaInfo'] ?? [];
+    
+    $videos = [];
+    foreach ($data['episodesInfo']['rows'] ?? [] as $ep) {
+        $videos[] = [
+            'episode'  => (int)($ep['orderNumber'] ?? 0) + 1,
+            'vid'      => $ep['id'],
+            'url'      => $ep['videoAddress'] ?? '',  // URL langsung!
+            'subtitle' => $ep['zimu'] ?? '',           // .id.srt path (ada karakter China)
+            'duration' => 0,
+        ];
+    }
+    
+    return [
+        'id'       => $id,
+        'title'    => $info['name'] ?? '',
+        'cover'    => $info['cover'] ?? '',
+        'synopsis' => $info['introduction'] ?? '',
+        'episodes' => count($videos),
+        'videos'   => $videos,
+        'source'   => $source,
+    ];
+}
+
+function velolo_search($source, $q, $page = 1) {
+    $d = velolo_fetch($source, "/search?q=" . urlencode($q) . "&page=$page&page_size=20");
+    if (!$d || ($d['code'] ?? 0) != 200) return null;
+    
+    $books = [];
+    foreach ($d['rows'] ?? [] as $item) $books[] = velolo_parse_item($item, $source);
+    return ['content' => $books, 'has_more' => false, 'total' => $d['total'] ?? 0];
+}
+
+function velolo_labels($source) {
+    $d = velolo_fetch($source, "/labels");
+    if (!$d || ($d['code'] ?? 0) != 200) return [];
+    return $d['data'] ?? [];
+}
+
+function velolo_hot($source) {
+    $d = velolo_fetch($source, "/hot");
+    if (!$d || ($d['code'] ?? 0) != 200) return null;
+    $books = [];
+    foreach ($d['rows'] ?? [] as $item) $books[] = velolo_parse_item($item, $source);
+    return ['content' => $books];
+}
+
+function velolo_new($source, $page = 1) {
+    $d = velolo_fetch($source, "/new?page=$page&page_size=20");
+    if (!$d || ($d['code'] ?? 0) != 200) return null;
+    $books = [];
+    foreach ($d['rows'] ?? [] as $item) $books[] = velolo_parse_item($item, $source);
+    return ['content' => $books, 'has_more' => ($page * 20) < ($d['total'] ?? 0)];
+}
+
+--- shortdrama-stardusttv.php FUNCTIONS ---
+
+$STARDUST_CODE = '0CCE84D6FBB6017B63BBE84083AE78D0';
+$STARDUST_BASE = 'https://stardusttv.dramabos.my.id';
+
+function stardust_fetch($path) {
+    global $STARDUST_CODE, $STARDUST_BASE;
+    $sep = strpos($path, '?') !== false ? '&' : '?';
+    $url = "$STARDUST_BASE$path{$sep}lang=id&code=$STARDUST_CODE";
+    $ctx = stream_context_create(['http' => ['timeout' => 15]]);
+    $r = @file_get_contents($url, false, $ctx);
+    return $r ? json_decode($r, true) : null;
+}
+
+function stardust_parse_item($item) {
+    // ID format gabungan: "slug|id"
+    $sid = ($item['slug'] ?? '') . '|' . ($item['id'] ?? '');
+    return [
+        'id'       => $sid,
+        'slug'     => $item['slug'] ?? '',
+        'title'    => $item['title'] ?? '',
+        'cover'    => $item['poster'] ?? $item['cover'] ?? '',
+        'synopsis' => $item['intro'] ?? '',
+        'episodes' => (int)($item['episode'] ?? 0),
+        'source'   => 'stardusttv',
+    ];
+}
+
+function stardust_list($page = 1) {
+    $d = stardust_fetch("/v1/list?page=$page");
+    if (!$d || !($d['status'] ?? false)) return null;
+    $books = [];
+    foreach ($d['data'] ?? [] as $item) $books[] = stardust_parse_item($item);
+    return ['content' => $books, 'has_more' => count($books) >= 20];
+}
+
+function stardust_detail($slug, $id) {
+    $d = stardust_fetch("/v1/detail/$slug/$id");
+    if (!$d) return null;
+    $data = $d['data'] ?? [];
+    
+    // Episodes adalah dict: {'1': {h264, h265}, '2': {...}}
+    // BUKAN array biasa!
+    $videos = [];
+    $episodes_data = $data['episodes'] ?? [];
+    foreach ($episodes_data as $ep_num => $val) {
+        if (!is_array($val)) continue; // Skip non-episode fields
+        $ep_num = (int)$ep_num;
+        $url = $val['h264'] ?? $val['h265'] ?? '';
+        $servers = [];
+        if (!empty($val['h264'])) $servers[] = ['label' => 'H264', 'url' => $val['h264']];
+        if (!empty($val['h265'])) $servers[] = ['label' => 'H265', 'url' => $val['h265']];
+        $videos[] = [
+            'episode' => $ep_num,
+            'vid'     => "$slug|$id|$ep_num",  // format untuk video fetch
+            'url'     => $url,
+            'servers' => $servers,
+            'duration'=> 0,
+        ];
+    }
+    // Sort by episode number
+    usort($videos, fn($a, $b) => $a['episode'] - $b['episode']);
+    
+    return [
+        'id'       => $id,
+        'slug'     => $slug,
+        'title'    => $data['title'] ?? '',
+        'cover'    => $data['poster'] ?? $data['cover'] ?? '',
+        'synopsis' => $data['intro'] ?? '',
+        'episodes' => (int)($data['totalEpisodes'] ?? count($videos)),
+        'videos'   => $videos,
+        'source'   => 'stardusttv',
+    ];
+}
+
+function stardust_video($slug, $id, $ep) {
+    $d = stardust_fetch("/v1/detail/$slug/$id/episode/$ep");
+    if (!$d) return null;
+    $data = $d['data'] ?? [];
+    $url = $data['h264'] ?? $data['h265'] ?? '';
+    if (!$url) return null;
+    $servers = [];
+    if (!empty($data['h264'])) $servers[] = ['label' => 'H264', 'url' => $data['h264']];
+    if (!empty($data['h265'])) $servers[] = ['label' => 'H265', 'url' => $data['h265']];
+    return ['url' => $url, 'servers' => $servers];
+}
+
+function stardust_search($q) {
+    $d = stardust_fetch("/v1/find?q=" . urlencode($q));
+    if (!$d || !($d['status'] ?? false)) return null;
+    $books = [];
+    foreach ($d['data'] ?? [] as $item) $books[] = stardust_parse_item($item);
+    return ['content' => $books, 'total' => count($books)];
+}
+
+--- shortdrama-netshort.php FUNCTIONS ---
+
+$NS_CODE = '0CCE84D6FBB6017B63BBE84083AE78D0';
+$NS_BASE = 'https://netshort.dramabos.my.id';
+
+function netshort_fetch($path) {
+    global $NS_CODE, $NS_BASE;
+    $sep = strpos($path, '?') !== false ? '&' : '?';
+    $url = "$NS_BASE$path{$sep}lang=in&code=$NS_CODE"; // lang=in bukan id!
+    $ctx = stream_context_create(['http' => ['timeout' => 15]]);
+    $r = @file_get_contents($url, false, $ctx);
+    return $r ? json_decode($r, true) : null;
+}
+
+function netshort_list($page = 1) {
+    $d = netshort_fetch("/api/list/$page");
+    // NetShort pakai code 200, bukan 0!
+    if (!$d || !in_array($d['code'] ?? 0, [0, 200])) return null;
+    
+    $books = [];
+    foreach ($d['data']['dataList'] ?? [] as $item) {
+        $books[] = [
+            'id'       => $item['shortPlayId'],     // field khusus NetShort!
+            'title'    => $item['shortPlayName'],   // bukan name atau title
+            'cover'    => $item['shortPlayCover'],  // bukan cover atau poster
+            'synopsis' => '',
+            'episodes' => (int)($item['maxEps'] ?? $item['maxOffset'] ?? 0),
+            'genres'   => $item['labelArray'] ?? [],
+            'is_hot'   => isset($item['heatScoreShow']),
+            'is_new'   => $item['isNewLabel'] ?? false,
+            'source'   => 'netshort',
+        ];
+    }
+    return ['content' => $books, 'has_more' => count($books) >= 10];
+}
+
+function netshort_detail($id) {
+    $d = netshort_fetch("/api/drama/$id");
+    if (!$d || !in_array($d['code'] ?? 0, [0, 200])) return null;
+    $info = $d['data'] ?? [];
+    
+    $max_eps = (int)($info['maxEps'] ?? $info['maxOffset'] ?? 0);
+    $videos = [];
+    for ($i = 1; $i <= $max_eps; $i++) {
+        $videos[] = [
+            'episode' => $i,
+            'vid'     => "$id|$i",  // format untuk watch
+            'url'     => '',         // URL diambil saat play
+            'duration'=> 0,
+        ];
+    }
+    
+    return [
+        'id'       => $id,
+        'title'    => $info['contentName'] ?? $info['shortPlayName'] ?? '',
+        'cover'    => $info['contentImg'] ?? $info['shortPlayCover'] ?? '',
+        'synopsis' => $info['contentRemark'] ?? '',
+        'episodes' => $max_eps,
+        'videos'   => $videos,
+        'source'   => 'netshort',
+    ];
+}
+
+function netshort_video($id, $ep) {
+    $d = netshort_fetch("/api/watch/$id/$ep");
+    if (!$d || !in_array($d['code'] ?? 0, [0, 200])) return null;
+    $data = $d['data'] ?? [];
+    
+    $url = $data['videoUrl'] ?? '';
+    if (!$url) return null;
+    
+    // Cari subtitle Indonesia
+    $subtitle = '';
+    foreach ($data['subtitles'] ?? [] as $sub) {
+        if (($sub['lang'] ?? '') === 'id_ID') {
+            $subtitle = $sub['url'];
+            break;
+        }
+    }
+    
+    return [
+        'url'      => $url,
+        'subtitle' => $subtitle,
+        'servers'  => [['label' => 'Default', 'url' => $url]],
+    ];
+}
+
+function netshort_search($q, $page = 1) {
+    $d = netshort_fetch("/api/search?q=" . urlencode($q) . "&page=$page");
+    if (!$d || !in_array($d['code'] ?? 0, [0, 200])) return null;
+    
+    // Hasil di searchCodeSearchResult, BUKAN simpleSearchResult!
+    $items = $d['data']['searchCodeSearchResult'] ?? 
+             $d['data']['simpleSearchResult'] ?? [];
+    
+    $books = [];
+    foreach ($items as $item) {
+        $books[] = [
+            'id'       => $item['shortPlayId'] ?? '',  // pakai shortPlayId!
+            'title'    => strip_tags($item['shortPlayName'] ?? ''), // strip <em> tag
+            'cover'    => $item['shortPlayCover'] ?? '',
+            'synopsis' => '',
+            'episodes' => (int)($item['maxEps'] ?? 0),
+            'source'   => 'netshort',
+        ];
+    }
+    return ['content' => $books, 'total' => count($books)];
+}
+
+--- subtitle-proxy.php LOGIKA ---
+
+<?php
+header('Access-Control-Allow-Origin: *');
+
+$url = $_GET['url'] ?? '';
+if (!$url) { http_response_code(400); exit; }
+
+// Validasi domain
+if (!str_contains($url, 'velolo.tv')) { http_response_code(403); exit; }
+
+// $_GET sudah auto-decode URL → url berisi karakter China
+// Encode karakter non-ASCII agar bisa di-fetch
+$url = preg_replace_callback('/[^\x00-\x7F]/', function($m) {
+    return rawurlencode($m[0]);
+}, $url);
+
+$ctx = stream_context_create(['http' => [
+    'timeout' => 15,
+    'header'  => "User-Agent: Mozilla/5.0\r\n"
+]]);
+$srt = @file_get_contents($url, false, $ctx);
+
+if (!$srt) {
+    header('Content-Type: text/vtt');
+    echo "WEBVTT\n\n";
+    exit;
+}
+
+// Convert SRT → WebVTT
+// Perbedaan: koma diganti titik di timestamp
+// SRT:  00:00:15,866 --> 00:00:18,066
+// VTT:  00:00:15.866 --> 00:00:18.066
+$vtt = "WEBVTT\n\n";
+$vtt .= preg_replace('/(\d{2}:\d{2}:\d{2}),(\d{3})/', '$1.$2', $srt);
+
+header('Content-Type: text/vtt; charset=utf-8');
+echo $vtt;
+
+================================================================
+SECTION 8: REACT — LOGIKA FRONTEND
+================================================================
+
+--- PATTERN FETCH DATA ---
+
+// Selalu pakai useCallback untuk fetch function
+const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+        const res = await fetch('/api/content.php?action=list&type=anime');
+        const json = await res.json();
+        // content.php: langsung tanpa wrapper
+        setItems(json.content || []);
+    } catch (err) {
+        setError('Gagal memuat data');
+    } finally {
+        setLoading(false);
+    }
+}, []);
+
+// novel.php: pakai wrapper {success, data}
+const fetchNovel = useCallback(async () => {
+    const res = await fetch('/api/novel.php?action=list');
+    const json = await res.json();
+    const novels = json.data?.novels || []; // akses .data dulu!
+    setItems(novels);
+}, []);
+
+--- HOOKS ORDER RULES ---
+
+// BENAR: Semua hooks dulu, conditional return belakangan
+const MyComponent = () => {
+    // 1. SEMUA HOOKS DULU
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const ref = useRef(null);
+    
+    useEffect(() => {
+        fetchData();
+    }, []);
+    
+    // 2. BARU conditional return
+    if (loading) return <Spinner />;
+    if (error) return <Error />;
+    
+    // 3. JSX utama
+    return <div>{data}</div>;
+};
+
+// SALAH (React Error #310):
+const MyComponent = () => {
+    const [data, setData] = useState(null);
+    
+    if (!data) return null; // ← conditional return sebelum hooks lain
+    
+    const [loading, setLoading] = useState(true); // ← hooks setelah return = ERROR!
+};
+
+--- ANIMÉDETAILPAGE LOGIKA ---
+
+// Iframe player TANPA sandbox
+<iframe
+    src={embedUrl}
+    className="w-full h-full"
+    allowFullScreen
+    // JANGAN tambahkan sandbox attribute!
+    // sandbox akan block video play
+/>
+
+// Load episode
+const loadEpisode = (slug: string, epNum: number) => {
+    setActiveEp(epNum);
+    setLoadingEmbed(true);
+    
+    fetch(`/api/get-embed.php?slug=${slug}`)
+        .then(r => r.json())
+        .then(res => {
+            setEmbedUrl(res.embed_url);
+            setLoadingEmbed(false);
+        });
+};
+
+// CommentSection: jangan fetch kalau contentId = 0
+if (!contentId) return null; // Guard di awal component
+
+--- SHORTDRAMADETAILPAGE LOGIKA ---
+
+// useSearchParams untuk dapat source dari URL
+const [searchParams] = useSearchParams();
+const source = searchParams.get('source') || 'melolo';
+
+// loadVideo function dengan direct URL support
+const loadVideo = (vid: string, ep: number, directUrl?: string, directSubtitle?: string) => {
+    setActiveVid(vid);
+    setActiveEp(ep);
+    setLoadingVideo(true);
+    setVideoUrl(null);
+    setSubtitleUrl(null);
+    
+    // Velolo, StardustTV: URL sudah ada dari detail response
+    if (directUrl) {
+        setVideoUrl(directUrl);
+        setServers([{ label: '480p', url: directUrl }]);
+        if (directSubtitle) {
+            // subtitle-proxy.php handle SRT→VTT
+            setSubtitleUrl('/api/subtitle-proxy.php?url=' + encodeURIComponent(directSubtitle));
+        }
+        setLoadingVideo(false);
+        // Scroll ke player
+        setTimeout(() => playerRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        return;
+    }
+    
+    // Melolo, NetShort: perlu fetch video URL
+    fetch(`/api/shortdrama-proxy.php?action=video&vid=${vid}&source=${source}`)
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) throw new Error(res.error);
+            setVideoUrl(res.data.url);
+            setServers(res.data.servers || []);
+            if (res.data.subtitle) {
+                setSubtitleUrl('/api/subtitle-proxy.php?url=' + encodeURIComponent(res.data.subtitle));
+            }
+            setLoadingVideo(false);
+        })
+        .catch(() => setLoadingVideo(false));
+};
+
+// Auto load episode pertama
+useEffect(() => {
+    if (drama?.videos?.length > 0) {
+        const firstVideo = drama.videos[0];
+        loadVideo(firstVideo.vid, firstVideo.episode, firstVideo.url, firstVideo.subtitle);
+    }
+}, [drama]);
+
+// Episode list render
+{drama.videos.map(v => (
+    <button
+        key={v.vid}
+        onClick={() => loadVideo(v.vid, v.episode, v.url, v.subtitle)}
+        className={activeEp === v.episode ? 'bg-rose-600 text-white' : 'bg-secondary'}
+    >
+        <div>{v.episode}</div>
+        <div>{formatDuration(v.duration)}</div>
+    </button>
+))}
+
+// Video player dengan subtitle
+<video key={videoUrl} controls autoPlay playsInline src={videoUrl}>
+    {subtitleUrl && (
+        <track 
+            kind="subtitles" 
+            src={subtitleUrl} 
+            srcLang="id" 
+            label="Indonesia" 
+            default 
+        />
+    )}
+    Browser tidak mendukung video.
+</video>
+
+--- NOVELDETAILPAGE READER LOGIKA ---
+
+// Theme state
+const [theme, setTheme] = useState<'dark'|'light'|'sepia'>('dark');
+const [fontSize, setFontSize] = useState(16);
+
+// Load dari localStorage
+useEffect(() => {
+    const savedTheme = localStorage.getItem('novel_theme') as 'dark'|'light'|'sepia';
+    if (savedTheme) setTheme(savedTheme);
+    const savedSize = localStorage.getItem('novel_fontSize');
+    if (savedSize) setFontSize(parseInt(savedSize));
+}, []);
+
+// Save ke localStorage saat berubah
+useEffect(() => {
+    localStorage.setItem('novel_theme', theme);
+}, [theme]);
+
+// Theme class
+const themeClass = {
+    dark: 'bg-gray-900 text-gray-100',
+    light: 'bg-white text-gray-900',
+    sepia: 'bg-amber-50 text-amber-900',
+}[theme];
+
+// Render konten chapter
+// Sonicmtl memisahkan paragraf dengan \n\n
+const renderContent = (content: string) => {
+    return content.split('\n\n').map((para, i) => (
+        <p key={i} className="mb-4 leading-relaxed">{para}</p>
+    ));
+};
+
+// Tap untuk hide/show UI
+const [showUI, setShowUI] = useState(true);
+const handleTap = () => setShowUI(prev => !prev);
+
+--- SHORTDRAMAPAGE LOGIKA ---
+
+// fetch berdasarkan tab dan source
+const fetchData = useCallback(async (action, source, page, offset, genre, append=false) => {
+    if (!append) setLoading(true);
+    else setLoadingMore(true);
+    
+    const params = new URLSearchParams({ action, source, page: page.toString() });
+    if (source === 'melolo') params.set('offset', offset.toString());
+    if (genre && genre !== 'Semua') params.append('genre', genre);
+    
+    const res = await fetch(`/api/shortdrama-proxy.php?${params}`);
+    const json = await res.json();
+    const data = json.data || {};
+    const content = data.content || [];
+    
+    if (append) setDramas(prev => [...prev, ...content]);
+    else {
+        setDramas(content);
+        // Featured untuk banner: prioritaskan is_hot atau is_new
+        const featured = content.filter(d => d.is_hot || d.is_new).slice(0, 5);
+        setFeaturedDramas(featured.length > 0 ? featured : content.slice(0, 5));
+    }
+    
+    setHasMore(data.has_more || false);
+    setNextOffset(data.next_offset || offset + 20);
+}, []);
+
+// Banner auto-scroll
+useEffect(() => {
+    if (featuredDramas.length > 1) {
+        const interval = setInterval(() => {
+            setBannerIndex(prev => (prev + 1) % featuredDramas.length);
+        }, 5000);
+        return () => clearInterval(interval);
+    }
+}, [featuredDramas.length]);
+
+// Fetch labels (genre) untuk velolo-type
+useEffect(() => {
+    const velolo_sources = ['velolo','dramabox','dramabite','reelife'];
+    if (!velolo_sources.includes(source)) return;
+    
+    fetch(`/api/shortdrama-proxy.php?action=labels&source=${source}`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) setLabels(res.data || []);
+        });
+}, [source]);
+
+================================================================
+SECTION 9: COMMON BUGS & FIX PATTERNS
+================================================================
+
+--- BUG: Blank page / React Error #310 ---
+Penyebab: hooks dipanggil setelah conditional return
+Fix: Pindahkan SEMUA hooks ke atas, sebelum return apapun
+
+--- BUG: PHP script hang / tidak respond ---
+Penyebab: file_get_contents tanpa timeout ke URL yang lambat/mati
+Fix: Selalu tambahkan timeout:
+  stream_context_create(['http' => ['timeout' => 15]])
+
+--- BUG: INSERT duplikat episode ---
+Penyebab: Scraper jalan berkali-kali tanpa guard
+Fix: Gunakan INSERT IGNORE + UNIQUE KEY unique_episode(content_id, episode_number)
+
+--- BUG: JSON array jadi object {} ---
+Penyebab: array_filter() tidak reset key
+Fix: $result = array_values(array_filter($arr, $callback));
+
+--- BUG: Video tidak play di iframe ---
+Penyebab: Ada sandbox attribute di iframe
+Fix: Hapus sandbox dari <iframe> tag di AnimeDetailPage.tsx
+
+--- BUG: Subtitle tidak muncul ---
+Penyebab 1: URL subtitle punya karakter China, gagal di-fetch
+Fix: subtitle-proxy.php encode non-ASCII via preg_replace_callback
+
+Penyebab 2: Content-Type bukan text/vtt
+Fix: header('Content-Type: text/vtt; charset=utf-8')
+
+Penyebab 3: Single/double encode tidak konsisten
+Fix: Di React encodeURIComponent sekali saja
+  setSubtitleUrl('/api/subtitle-proxy.php?url=' + encodeURIComponent(subtitleUrl))
+
+--- BUG: NetShort search 0 atau 1 hasil ---
+Penyebab: Pakai 'id' field yang null, atau ID bentrok dengan source lain
+Fix: Gunakan shortPlayId yang unik, prefix dengan 'ns_' kalau perlu
+
+--- BUG: StardustTV episodes kosong ---
+Penyebab: Parsing episodes sebagai array, padahal dict string-key
+Fix: foreach ($data['episodes'] as $ep_num => $val) dengan cek is_array($val)
+
+--- BUG: Velolo detail title/cover kosong ---
+Penyebab: Akses $data['dramaInfo'] yang tidak ada
+Fix: Gunakan $data['videoInfo'] (field yang benar!)
+  $info = $data['videoInfo'] ?? $data['dramaInfo'] ?? [];
+
+--- BUG: Duplicate require_once di shortdrama-proxy.php ---
+Penyebab: Script Python append multiple kali karena NOT FOUND
+Fix: Cek file proxy, pastikan require_once hanya sekali:
+  grep "require_once" /var/www/streamify/app/backend-vps/api/shortdrama-proxy.php
+
+--- BUG: CommentSection fetch dengan contentId=0 ---
+Penyebab: contentId belum ready saat component mount
+Fix: Guard di CommentSection: if (!contentId) return null;
+
+--- BUG: Donghua slug conflict dengan manga ---
+Penyebab: Manga "martial-master" dan donghua "martial-master" punya slug sama
+Fix: Donghua pakai slug "martial-master-donghua"
+  content.php fallback: coba slug + '-donghua' kalau type='donghua' tidak ketemu
+
+--- BUG: nohup php << 'EOF' hang ---
+Penyebab: Terminal interpret heredoc berbeda di shell
+Fix: 
+  cat > /tmp/script.php << 'PHPEOF'
+  <?php
+  // kode
+  PHPEOF
+  nohup php /tmp/script.php > /var/log/output.log 2>&1 &
+
+================================================================
+SECTION 10: DATABASE QUERIES PENTING
+================================================================
+
+-- Cek jumlah content per type
+SELECT type, COUNT(*) as total FROM content GROUP BY type;
+
+-- Cek anime ongoing
+SELECT COUNT(*) FROM content WHERE type='anime' AND status='ongoing';
+
+-- Cek episode terbanyak
+SELECT c.title, COUNT(e.id) as ep_count 
+FROM content c 
+LEFT JOIN episodes e ON c.id = e.content_id 
+GROUP BY c.id 
+ORDER BY ep_count DESC 
+LIMIT 10;
+
+-- Cek novel chapters dengan konten
+SELECT COUNT(*) FROM novel_chapters WHERE content IS NOT NULL;
+
+-- Reset updated_at untuk force re-check semua anime
+-- (dipakai kalau mau force update semua episode)
+UPDATE content SET updated_at = '2020-01-01' WHERE type='anime' AND status='ongoing';
+
+-- Cek duplicate episode
+SELECT content_id, episode_number, COUNT(*) as cnt 
+FROM episodes 
+GROUP BY content_id, episode_number 
+HAVING cnt > 1;
+
+-- Cari manga by slug (untuk debug register)
+SELECT id, title, type FROM content WHERE slug = 'nama-slug';
+
+================================================================
+SECTION 11: MONITORING COMMANDS
+================================================================
+
+-- Monitor cronjob log
+tail -f /var/log/update-episodes.log
+tail -f /var/log/donghua-update.log
+tail -f /var/log/manga-update.log
+tail -f /var/log/fix-poster.log
+
+-- Monitor novel scraper
+tail -5 /var/log/novel_chapters.log
+ps aux | grep novel_chapters | grep -v grep
+
+-- Kill scraper
+kill $(ps aux | grep novel_chapters | grep -v grep | awk '{print $2}')
+
+-- Test API endpoint
+curl -s "https://playall.me/api/content.php?action=list&type=anime&page=1" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('content',[])))"
+curl -s "https://playall.me/api/shortdrama-proxy.php?action=list&source=velolo" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['total'])"
+
+-- Check DB
+mysql -u streamify_user -primbamobile2 streamify_db -e "SELECT type, COUNT(*) FROM content GROUP BY type;"
+
+================================================================
+END PESAN 4 — SEMUA LOGIKA KODING
+================================================================
+
+================================================================
+STREAMIFY / PLAYALL STREAM — RINGKASAN LENGKAP UNTUK CLAUDE BARU
+================================================================
+Dibuat: 23 Maret 2026
+Tujuan: Membantu Claude baru memahami proyek secara menyeluruh
+
+================================================================
+BAGIAN 1: GAMBARAN UMUM PROYEK
+================================================================
+
+Nama proyek   : Streamify (tampil ke user sebagai "PlayAll Stream")
+Domain utama  : playall.me
+GitHub        : https://github.com/Senjakun/streamify-now
+Tujuan        : Platform streaming all-in-one untuk nonton anime, donghua,
+                baca manga/manhwa/manhua, baca novel, dan nonton short drama
+                — semuanya gratis, bahasa Indonesia, dalam satu web app.
+
+================================================================
+BAGIAN 2: INFRASTRUKTUR VPS
+================================================================
+
+--- VPS UTAMA ---
+IP            : 194.62.248.102
+Domain        : playall.me
+RAM           : 8GB
+Storage       : 49GB
+Fungsi        : Hosting React frontend + PHP backend API + MySQL database
+                Semua request user masuk ke sini
+OS            : Ubuntu 24
+Web server    : Nginx
+
+--- VPS KECIL ---
+IP            : 143.198.93.61
+Domain        : (tidak ada domain, akses via IP langsung)
+Fungsi        : KHUSUS scraping otakudesu.blog
+                Otakudesu.blog MEMBLOCK VPS utama, jadi semua request
+                ke otakudesu HARUS lewat VPS kecil ini
+Flow request  : Frontend → VPS Utama API → VPS Kecil API → otakudesu.blog
+Path kode     : /var/www/streamify/app/backend-vps/
+
+--- VPS MANGA ---
+IP            : 157.245.196.252
+Domain        : mangaserver.playall.me
+Fungsi        : Proxy manga dari v1.kiryuu.to
+                VPS utama forward request manga ke VPS ini,
+                VPS ini yang fetch ke kiryuu
+
+================================================================
+BAGIAN 3: STACK TEKNOLOGI
+================================================================
+
+Frontend:
+- React + TypeScript
+- Vite (build tool)
+- Tailwind CSS (hanya core utility classes, BUKAN custom compiler)
+- lucide-react (icons)
+- React Router (routing, BUKAN Next.js)
+- shadcn/ui (beberapa komponen)
+
+Backend:
+- PHP (tanpa framework, murni PHP)
+- MySQL (database: streamify_db)
+- Nginx (web server)
+
+Database credentials:
+- Host     : localhost
+- DB name  : streamify_db
+- Username : streamify_user
+- Password : rimbamobile2
+- JWT Secret: 089c01c76039b35d54fb1f04034b023b84674277a50e0c8eefd1e2ffb7445cc4
+
+================================================================
+BAGIAN 4: STRUKTUR FOLDER PENTING
+================================================================
+
+/var/www/streamify/
+├── app/                          ← Root proyek
+│   ├── src/                      ← Source React
+│   │   ├── pages/                ← Semua halaman
+│   │   │   ├── AnimePage.tsx
+│   │   │   ├── AnimeDetailPage.tsx
+│   │   │   ├── DonghuaPage.tsx
+│   │   │   ├── DonghuaDetailPage.tsx
+│   │   │   ├── MangaPage.tsx
+│   │   │   ├── MangaDetailPage.tsx
+│   │   │   ├── MoviesPage.tsx
+│   │   │   ├── MovieDetailPage.tsx
+│   │   │   ├── NovelPage.tsx
+│   │   │   ├── NovelDetailPage.tsx
+│   │   │   ├── ShortDramaPage.tsx
+│   │   │   ├── ShortDramaDetailPage.tsx
+│   │   │   ├── SearchPage.tsx
+│   │   │   ├── ProfilePage.tsx
+│   │   │   ├── BookmarksPage.tsx
+│   │   │   ├── HistoryPage.tsx
+│   │   │   ├── AdminPage.tsx
+│   │   │   └── NotFound.tsx
+│   │   ├── components/           ← Komponen reusable
+│   │   │   ├── Navbar.tsx
+│   │   │   ├── Footer.tsx
+│   │   │   └── CommentSection.tsx
+│   │   └── App.tsx               ← Routes utama
+│   ├── backend-vps/
+│   │   ├── api/                  ← Semua PHP API
+│   │   │   ├── content.php       ← Anime/donghua CRUD
+│   │   │   ├── get-embed.php     ← Ambil embed URL anime
+│   │   │   ├── manga-proxy.php   ← Proxy manga
+│   │   │   ├── novel.php         ← API novel
+│   │   │   ├── shortdrama-proxy.php      ← Router short drama
+│   │   │   ├── shortdrama-melolo.php     ← Handler Melolo
+│   │   │   ├── shortdrama-velolo.php     ← Handler Velolo dll
+│   │   │   ├── shortdrama-stardusttv.php ← Handler StardustTV
+│   │   │   ├── shortdrama-netshort.php   ← Handler NetShort
+│   │   │   ├── subtitle-proxy.php        ← SRT→VTT converter
+│   │   │   ├── auth.php          ← Login/register
+│   │   │   ├── user.php          ← Profile user
+│   │   │   ├── bookmark.php      ← Bookmark
+│   │   │   ├── history.php       ← History nonton
+│   │   │   ├── comment.php       ← Komentar
+│   │   │   └── admin.php         ← Admin panel API
+│   │   └── scraper/              ← Script scraping
+│   │       ├── fix-poster.php    ← Fix poster anime yang kosong
+│   │       ├── update-episodes.php ← Update episode ongoing anime
+│   │       ├── donghua-update.php  ← Update donghua baru
+│   │       └── manga-update.php    ← Update manga baru
+│   ├── dist/                     ← Build output React
+│   └── public/                   ← Static files yang di-serve Nginx
+├── public/                       ← Nginx serve dari sini
+│   └── (copy dari app/dist/)
+
+Command build & deploy:
+cd /var/www/streamify/app && npm run build && cp -r dist/* /var/www/streamify/public/
+
+================================================================
+BAGIAN 5: DATABASE — TABEL UTAMA
+================================================================
+
+content (anime, donghua, manga, manhwa, manhua):
+- id, title, slug, type ('anime'|'donghua'|'manga'|'manhwa'|'manhua')
+- status ('ongoing'|'completed'), rating DECIMAL(3,1)
+- year, poster, synopsis, updated_at
+
+episodes (untuk anime & donghua):
+- id, content_id (FK), episode_number, slug, embed_url
+- UNIQUE KEY unique_episode(content_id, episode_number)
+- Selalu INSERT IGNORE (scraper bisa jalan berulang)
+
+novels:
+- id, title, slug, cover, description, source_url, gender
+- status, genre, total_chapters
+
+novel_chapters:
+- id, novel_id, chapter_number, title, content (TEXT), source_url
+- content bisa NULL (lazy load — diisi saat user baca)
+
+users:
+- id, username, email, password_hash, avatar, role
+
+bookmarks, history, comments: standard
+
+DB Stats saat ini:
+- Anime: ~2000+ series dari otakudesu
+- Donghua: 438 series, 15170 episodes dari anichin
+- Manga/manhwa/manhua: 8000+ dari kiryuu.to
+- Novel: 481 dari sonicmtl.com
+- Novel chapters dengan konten: 24762+ (3 novel fully scraped)
+
+================================================================
+BAGIAN 6: CRONJOB VPS UTAMA
+================================================================
+
+0 3 * * *   php /var/www/streamify/app/backend-vps/scraper/manga-update.php >> /var/log/manga-update.log 2>&1
+0 3 * * 0   php /var/www/streamify/app/backend-vps/scraper/fix-poster.php >> /var/log/fix-poster.log 2>&1
+0 4 * * *   php /var/www/streamify/app/backend-vps/scraper/donghua-update.php >> /var/log/donghua-update.log 2>&1
+0 6 * * *   php /var/www/streamify/app/backend-vps/scraper/update-episodes.php >> /var/log/update-episodes.log 2>&1
+
+================================================================
+BAGIAN 7: ROUTES REACT (App.tsx)
+================================================================
+
+/                    → Index (homepage)
+/anime               → AnimePage
+/anime/:slug         → AnimeDetailPage
+/donghua             → DonghuaPage
+/donghua/:slug       → DonghuaDetailPage
+/manga               → MangaPage
+/manga/:slug         → MangaDetailPage
+/movies              → MoviesPage
+/movies/:slug        → MovieDetailPage
+/novel               → NovelPage
+/novel/:slug         → NovelDetailPage
+/shortdrama          → ShortDramaPage
+/shortdrama/:id      → ShortDramaDetailPage  (NOTE: pakai ?source=xxx di query)
+/search              → SearchPage
+/profile             → ProfilePage
+/bookmarks           → BookmarksPage
+/history             → HistoryPage
+/admin               → AdminPage
+*                    → NotFound
+
+================================================================
+BAGIAN 8: ATURAN KODING WAJIB (JANGAN DILANGGAR)
+================================================================
+
+REACT:
+1. Semua hooks (useState, useEffect, useCallback, useRef) HARUS
+   dideklarasikan SEBELUM conditional return apapun.
+   Kalau ada hooks setelah return → React error #310 (Rules of Hooks)
+   
+2. JANGAN pakai <form> tags. Gunakan onClick/onChange biasa.
+
+3. Hanya pakai Tailwind core utility classes.
+   Tidak ada custom compiler, jadi class custom tidak akan work.
+
+4. Default export untuk semua page component.
+
+PHP:
+1. file_get_contents WAJIB pakai timeout:
+   $ctx = stream_context_create(['http'=>['timeout'=>15]]);
+   $html = file_get_contents($url, false, $ctx);
+   Tanpa timeout → script stuck selamanya!
+
+2. Setiap action handler HARUS diakhiri exit:
+   if ($action === 'list') {
+     ... proses ...
+     echo json_encode($result);
+     exit;  ← WAJIB
+   }
+
+3. JANGAN taruh http_response_code() di tengah file.
+
+4. INSERT IGNORE untuk semua insert episode (scraper bisa jalan berulang).
+
+5. Array PHP setelah array_filter → pakai array_values()
+   Kalau tidak, JSON encode jadi object bukan array.
+
+6. NetShort API pakai code 200, bukan 0:
+   if (!in_array($d['code'], [0, 200])) return null;
+
+SHELL:
+1. nohup php << 'EOF' TIDAK JALAN di terminal.
+   Solusi yang benar:
+   cat > /tmp/script.php << 'EOF'
+   ... isi PHP ...
+   EOF
+   nohup php /tmp/script.php > /var/log/xxx.log 2>&1 &
+
+2. shell_exec() jalan sebagai www-data.
+   Pastikan log file chmod 666 agar bisa ditulis.
+
+PYTHON EDIT PHP:
+1. Kalau replace string tidak ketemu (NOT FOUND):
+   idx = content.find("kata kunci")
+   print(repr(content[idx:idx+200]))
+   → Lihat exact string termasuk whitespace/newline
+
+GIT:
+1. VPS kecil, push pertama: git push origin main --force
+   (karena repo baru diinit, ada conflict)
+
+================================================================
+BAGIAN 9: SITUASI SAAT INI — FITUR YANG SUDAH JALAN
+================================================================
+
+✅ ANIME:
+- List anime dari DB (scraping otakudesu)
+- Detail anime dengan episode list
+- Player dengan embed dari otakudesu (via VPS kecil)
+- Embed decode base64 2x
+- Iframe TANPA sandbox attribute
+- Filter server iklan di get-embed.php
+
+✅ DONGHUA:
+- List dari DB (438 series)
+- Detail dengan episode list dari DB
+- Embed realtime dari anichin.moe
+- Genre filter
+
+✅ MANGA:
+- List 8000+ dari kiryuu.to (proxy realtime)
+- Detail manga
+- Chapter list
+- Reader (baca per halaman)
+- Search
+- Image proxy (hindari hotlink)
+
+✅ NOVEL:
+- List 481 novel
+- Reader dengan lazy load chapter
+- Theme dark/light/sepia
+- Font size A-/A+
+- Chapter navigation prev/next
+- Strip iklan dari konten
+
+✅ SHORT DRAMA:
+- List dari 6 source: Melolo, Velolo, StardustTV, NetShort, DramaBite, Reelife
+- Detail dengan episode list
+- Player HTML5
+- Subtitle Indonesia (Velolo: file .id.srt via proxy SRT→VTT)
+- Server selector (kualitas video)
+- Search (Melolo + Velolo + StardustTV = 68+ hasil)
+- Banner auto-scroll featured drama
+- Tab: Beranda / Hot / Terbaru
+- Genre filter (Velolo: dari API, lainnya: hardcode)
+- Source buttons dengan warna per platform
+
+================================================================
+BAGIAN 10: SITUASI SAAT INI — YANG BELUM / BERMASALAH
+================================================================
+
+⚠️ MASALAH AKTIF:
+
+1. NetShort search masuk cuma 1 item
+   Penyebab: ID dari NetShort bentrok dengan ID dari source lain
+   di array $seen_ids (deduplication logic di search all)
+   Fix: Pastikan ID NetShort pakai shortPlayId yang unik
+   File: shortdrama-netshort.php + shortdrama-proxy.php
+
+2. DramaBite & Reelife search belum dicek
+   Belum ditest apakah endpoint search mereka jalan
+   Kemungkinan sama struktur dengan Velolo (/search?q=)
+
+3. DramaBox API bermasalah (kata dev-nya lagi error)
+   Skip sementara, homepage DramaBox pakai structure berbeda
+   Tunggu sampai dev-nya fix
+
+4. Genre filter tidak konsisten antar source
+   Velolo: punya /labels endpoint → genre dari API
+   Source lain: hardcode array GENRES di ShortDramaPage.tsx
+
+❌ BELUM DIIMPLEMENTASI:
+
+5. Short Drama di homepage belum ada section
+   Homepage masih menampilkan Anime, Donghua, Manga saja
+
+6. Manga: label manhwa/manhua/manga di card belum tampil
+   Genre filter di MangaPage belum ada
+   Tombol "Update Terbaru" belum ada
+
+7. Novel source female belum ada (hanya male/gender-neutral)
+
+8. Search novel hanya dari DB
+   (novel yang belum pernah dibuka tidak muncul di search)
+
+================================================================
+BAGIAN 11: RENCANA MASA DEPAN (PRIORITAS)
+================================================================
+
+JANGKA PENDEK (perlu segera):
+1. Fix NetShort search ID bentrok
+2. Cek DramaBite & Reelife search
+3. Tambah section Short Drama di homepage
+4. Manga: tambah label type + genre filter
+
+JANGKA MENENGAH:
+5. DramaBox integrasi (tunggu API fix)
+6. Novel: tambah search realtime dari source
+7. Short Drama detail page: lebih bagus, poster landscape
+8. Fitur download / offline (kalau memungkinkan)
+
+JANGKA PANJANG:
+9. Novel source female (romance/josei)
+10. PWA (Progressive Web App) untuk install di HP
+11. Push notification untuk anime/drama episode baru
+12. Rekomendasi personal berdasarkan history
+
+================================================================
+BAGIAN 12: CARA DEPLOY SETELAH EDIT
+================================================================
+
+Setelah edit file React (.tsx):
+cd /var/www/streamify/app
+npm run build 2>&1 | grep -E "ERROR|error TS|✓|built" | tail -5
+cp -r dist/* /var/www/streamify/public/
+
+Setelah edit file PHP:
+Tidak perlu build, langsung jalan (PHP diparse runtime)
+Test via curl atau browser
+
+Cara test API PHP:
+curl -s "https://playall.me/api/nama-file.php?action=xxx" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d)"
+
+Cara monitor scraper:
+tail -f /var/log/nama-scraper.log
+
+Cara kill scraper:
+kill $(ps aux | grep nama_script | grep -v grep | awk '{print $2}')
+
+================================================================
+BAGIAN 13: CATATAN KHUSUS PENTING
+================================================================
+
+1. JANGAN edit Navbar.tsx tanpa hati-hati
+   Navbar dipakai di semua halaman, satu error bisa break semua
+
+2. CommentSection.tsx: ada guard if (!contentId) return
+   Tanpa ini, akan fetch komentar dengan contentId=0
+
+3. Short drama route: /shortdrama (BUKAN /short-drama)
+   Tombol di homepage user sudah di-update ke /shortdrama
+
+4. Velolo subtitle: field zimu berisi URL dengan karakter China di path
+   subtitle-proxy.php harus encode karakter non-ASCII sebelum fetch
+   $_GET sudah auto-decode, jadi langsung pakai preg_replace encode
+
+5. StardustTV episode: ada di field 'episodes' sebagai dict numerik
+   {'1': {h264, h265}, '2': ...} bukan array biasa
+
+6. ShortDramaDetailPage: loadVideo() terima parameter directUrl dan directSubtitle
+   Kalau ada directUrl → set langsung, TIDAK fetch ke /api/video
+
+7. Velolo-type sources (velolo, dramabox, dramabite, reelife):
+   Masih pakai shortdrama-velolo.php handler yang sama
+   NetShort sudah pisah ke shortdrama-netshort.php karena struktur beda
+
+8. PHP file duplicate require_once pernah terjadi (bug lama):
+   Cek /var/www/streamify/app/backend-vps/api/shortdrama-proxy.php
+   Pastikan tidak ada require_once duplikat
+
+================================================================
+END OF SUMMARY — BAGIAN 1
+================================================================
+Dokumen ini mencakup: Infrastruktur, Stack, Struktur Folder,
+Database, Cronjob, Routes, Aturan Koding, Status Fitur,
+Masalah Aktif, Rencana Masa Depan, dan Catatan Penting.
+
+================================================================
+STREAMIFY — PESAN 2: DETAIL ANIME & NOVEL
+================================================================
+
+================================================================
+BAGIAN A: SISTEM ANIME — LENGKAP
+================================================================
+
+--- SUMBER DATA ---
+Source utama  : otakudesu.blog
+Mengapa VPS kecil: otakudesu.blog MEMBLOKIR IP VPS utama.
+  Semua request ke otakudesu HARUS lewat VPS kecil (143.198.93.61)
+  
+Flow lengkap:
+  User → playall.me (VPS Utama) → 143.198.93.61 (VPS Kecil) → otakudesu.blog
+
+--- SISTEM: SCRAPING + DB ---
+Anime BUKAN realtime proxy. Sistem kita:
+1. Scrape data anime dari otakudesu → simpan ke DB (tabel content + episodes)
+2. User buka web → data dari DB (cepat, tidak tergantung otakudesu)
+3. Hanya saat PLAY video → request realtime ke otakudesu via VPS kecil
+
+Ini bedanya dengan short drama yang FULL realtime proxy.
+
+--- SCRAPING AWAL (sudah selesai) ---
+~2000+ anime sudah ada di DB, hasil scraping awal.
+Script: /var/www/streamify/app/backend-vps/scraper/ (berbagai script)
+
+Cara scrape anime list:
+  GET otakudesu.blog/anime-list.php
+  → Parse HTML → ambil semua slug anime
+  → Untuk setiap slug: GET otakudesu.blog/anime/{slug}/
+  → Ambil title, poster, synopsis, rating, year, status
+  → INSERT ke tabel content (type='anime')
+
+Cara scrape episode list:
+  GET otakudesu.blog/anime/{anime-slug}/
+  → Parse HTML → ambil semua link episode
+  PENTING: Episode slug TIDAK BISA diprediksi dari anime slug!
+  Contoh: anime slug "devil-crybaby" → episode slug "devlmn-crby-episode-1-sub-indo"
+  Tidak ada pola yang konsisten!
+  → Selalu ambil episode slug dari scraping halaman anime, bukan generate sendiri
+  → Simpan episode slug ke tabel episodes
+
+--- UPDATE EPISODES OTOMATIS (CRONJOB) ---
+File: /var/www/streamify/app/backend-vps/scraper/update-episodes.php
+Jadwal: 0 6 * * * (setiap hari jam 6 pagi)
+
+Logika update-episodes.php:
+1. Ambil 50 anime dengan status='ongoing' ORDER BY updated_at ASC
+   (yang paling lama di-update duluan)
+2. Untuk setiap anime:
+   a. Fetch /anime/{slug}/ dari otakudesu via VPS kecil
+   b. Parse episode list terbaru
+   c. INSERT IGNORE episode baru ke DB
+   d. UPDATE updated_at = NOW() di tabel content
+   e. Sleep 1 detik (jangan spam otakudesu)
+3. Selesai 50 anime, stop (jalan lagi besok ambil 50 berikutnya)
+
+Mengapa hanya 50? Kalau terlalu banyak → timeout / IP ban otakudesu
+
+--- CRONJOB LAINNYA ---
+0 3 * * 0  fix-poster.php   → Fix poster anime yang kosong (tiap Minggu)
+           Ambil ulang poster dari otakudesu untuk anime tanpa poster
+
+--- SISTEM EMBED / PLAY VIDEO ---
+Saat user klik "Tonton" suatu episode:
+
+Step 1: Frontend kirim request ke get-embed.php di VPS utama
+  GET /api/get-embed.php?slug={episode-slug}
+
+Step 2: get-embed.php forward ke VPS kecil
+  GET 143.198.93.61/api/get-embed.php?slug={episode-slug}
+
+Step 3: VPS kecil fetch halaman play otakudesu
+  GET otakudesu.blog/play/{episode-slug}/
+  Parse HTML → cari element dengan data-content attribute
+
+Step 4: Decode embed
+  data-content berisi JSON yang di-encode base64:
+  {"id": "xxx", "i": 0, "q": "480p"}
+  
+  Decode base64 → dapat JSON → ambil field "id"
+  
+Step 5: Request AJAX ke otakudesu
+  POST otakudesu.blog/wp-admin/admin-ajax.php
+  dengan data: action=player_ajax&post=xxx
+  
+  Response juga base64 encoded!
+  Decode base64 → dapat JSON → field "data" juga base64 lagi
+  Decode lagi → dapat video URL / iframe URL
+
+Step 6: Filter server iklan
+  get-embed.php memfilter server-server ini (jangan ditampilkan):
+  - vidhide
+  - filedon  
+  - pdrain
+  - ondesu
+  Hanya return server yang bersih
+
+Step 7: Return ke frontend sebagai iframe URL
+  Frontend render iframe TANPA sandbox attribute
+  PENTING: Jangan tambahkan sandbox ke iframe!
+  Kalau pakai sandbox → video tidak bisa play (vidhide error "sandboxed iframe")
+
+--- LOGIKA FIX KALAU EMBED TIDAK JALAN ---
+Problem umum yang pernah terjadi:
+
+1. "Episode tidak ditemukan" di VPS kecil:
+   Cek apakah slug episode valid
+   Cek GET otakudesu.blog/play/{slug}/ dari VPS kecil
+   
+2. Video tidak muncul, hanya hitam:
+   Kemungkinan: iframe pakai sandbox attribute → hapus sandbox
+   Cek: AnimeDetailPage.tsx → pastikan tidak ada sandbox di <iframe>
+   
+3. Title duplikat "Episode 1 - Episode 1":
+   get-embed.php ada logic strip title duplikat
+   Regex: preg_replace('/^(.+)\s*-\s*\1$/i', '$1', $title)
+   
+4. Server tidak muncul semua:
+   Cek filter server di get-embed.php
+   Kadang otakudesu ganti nama server iklan → update filter list
+
+5. VPS kecil timeout:
+   Cek koneksi VPS kecil ke otakudesu
+   Cek apakah IP VPS kecil kena block (ganti IP kalau perlu)
+
+--- FILE PHP PENTING ANIME ---
+/var/www/streamify/app/backend-vps/api/content.php
+  Actions: list, detail, search, related
+  Response format: langsung tanpa wrapper
+  {id, title, slug, type, status, rating, year, poster, synopsis, episodes:[...]}
+
+/var/www/streamify/app/backend-vps/api/get-embed.php
+  Params: ?slug={episode-slug}
+  Flow: VPS utama → VPS kecil → otakudesu → decode → filter → return
+  Return: {embed_url: "...", title: "..."}
+
+--- FILE REACT ANIME ---
+/var/www/streamify/app/src/pages/AnimePage.tsx
+  - List anime dengan filter genre, status, year
+  - Search
+  - Pagination
+
+/var/www/streamify/app/src/pages/AnimeDetailPage.tsx
+  - Detail anime
+  - Episode list
+  - Player iframe (TANPA sandbox!)
+  - CommentSection
+  - Related anime
+
+--- DONGHUA (BERBEDA DENGAN ANIME) ---
+Source: anichin.moe (bukan otakudesu)
+Sistem: SAMA dengan anime (DB-based, cronjob update)
+
+Perbedaan penting:
+- type = 'donghua' di tabel content
+- Embed dari anichin (bukan otakudesu)
+- Scraper: donghua-update.php (update 3 page terbaru dari anichin)
+- ada slug conflict: "martial-master" ada di manga DAN donghua
+  Fix: donghua pakai slug "martial-master-donghua"
+
+Logika anichin:
+- Tidak ada halaman list lengkap
+- Cara: loop /page/N/ → extract episode URL → strip "-episode-N-..." → dapat series slug
+- Series URL: /slug/ (TANPA /anime/ prefix)
+- Episode: /{episode-slug}-subtitle-indonesia/
+- Embed perlu decode base64
+- ok.ru paling reliable untuk video donghua
+
+================================================================
+BAGIAN B: SISTEM NOVEL — LENGKAP
+================================================================
+
+--- SUMBER DATA ---
+Source: sonicmtl.com
+Total: 481 novel di DB
+Genre: kebanyakan male (isekai, cultivation, action)
+Belum ada: novel female/romance (todo)
+
+--- SISTEM: LAZY LOAD ---
+Novel menggunakan sistem LAZY LOADING untuk chapter:
+- Data novel (title, cover, synopsis) → scrape sekali, simpan DB
+- Konten chapter → TIDAK discrape semua di awal
+- Chapter di-fetch dari sonicmtl SAAT USER BACA, lalu disimpan ke DB
+
+Mengapa lazy load?
+- 481 novel × rata-rata 500+ chapter = ratusan ribu chapter
+- Kalau scrape semua → memakan storage GB + kena CF block sonicmtl
+- Lazy load: hanya ambil chapter yang benar-benar dibaca user
+
+--- ALUR BACA NOVEL ---
+1. User buka NovelPage → list 481 novel dari DB
+2. User klik novel → NovelDetailPage → synopsis + chapter list dari DB
+3. User klik chapter → novel.php cek DB:
+   a. Kalau chapter sudah ada di DB (content != NULL) → langsung return dari DB
+   b. Kalau belum ada → fetch dari sonicmtl.com → strip iklan → simpan ke DB → return
+4. Selanjutnya kalau user baca chapter yang sama → dari DB (cepat)
+
+--- novel.php API ---
+File: /var/www/streamify/app/backend-vps/api/novel.php
+
+Actions:
+- action=list    : List semua novel (filter gender, status, genre, orderby, search, page)
+- action=detail  : Detail novel + chapter list (dari DB)
+- action=chapter : Ambil konten chapter (lazy load dari sonicmtl)
+
+PENTING - Response format novel.php:
+  {success: true, data: {...}}
+  Akses via: res.data (ada wrapper, BERBEDA dengan content.php!)
+
+Beda dengan content.php yang return langsung tanpa wrapper.
+
+--- Strip Iklan ---
+sonicmtl.com menyisipkan iklan VDO.AI di konten chapter.
+novel.php strip semua script dan div iklan dari konten.
+Pattern yang distrip: <script>...VDO.AI...<\/script> dan div terkait
+
+--- Decode HTML Entities ---
+Description/synopsis dari sonicmtl sering berisi HTML entities (&amp; dll)
+novel.php decode entities sebelum simpan ke DB
+
+--- FITUR NovelDetailPage.tsx ---
+1. Reader overlay:
+   - Buka chapter → overlay fullscreen reader
+   - Tap layar → toggle hide/show navbar & header
+   - Ini untuk "immersive reading mode"
+
+2. Theme selector:
+   - ☀️ Light (putih)
+   - 📜 Sepia (kecoklatan, nyaman mata)
+   - 🌙 Dark (hitam)
+   Tersimpan di localStorage per user
+
+3. Font size:
+   - Tombol A- dan A+
+   - Range: 14px sampai 22px
+   - Tersimpan di localStorage
+
+4. Chapter list sidebar:
+   - Geser dari kanan → list semua chapter
+   - Tap chapter langsung pindah
+
+5. Navigation:
+   - Tombol ← Prev dan Next →
+   - Di atas dan bawah reader
+
+6. Paragraf rendering:
+   Konten dari sonicmtl dipisah dengan \n\n
+   Render: split('\n\n') → map ke <p> tag
+
+--- LOGIKA FIX NOVEL ---
+1. Chapter tidak muncul kontennya:
+   Cek apakah sonicmtl masih accessible
+   Cek apakah URL chapter di sonicmtl berubah format
+   Cek novel.php action=chapter return { content: "..." }
+
+2. Konten penuh iklan:
+   Update regex strip iklan di novel.php
+   VDO.AI sering ganti pattern iklannya
+
+3. Novel tidak muncul di search:
+   Search hanya dari DB
+   Novel yang belum pernah dibuka tidak ada di search
+   Solusi: scrape dulu metadata semua novel
+
+4. Chapter list tidak lengkap:
+   novel.php action=detail ambil chapter list dari DB
+   Kalau chapter belum pernah di-fetch, content = NULL
+   Chapter tetap tampil di list, tapi content diambil saat diklik
+
+--- TABEL DB NOVEL ---
+novels:
+  id, title, slug, cover, description, source_url
+  gender (male/female/both), status, genre, total_chapters
+  created_at, updated_at
+
+novel_chapters:
+  id, novel_id, chapter_number, title
+  content TEXT (NULL kalau belum di-fetch)
+  source_url, created_at
+
+--- STATISTIK DB ---
+novels: 481 entries
+novel_chapters total: 24762+ dengan konten terisi
+  (Bringing The Farm: ~16000 chapter)
+  (Beastmaster: ~7266 chapter)
+  (Beast Taming: ~1496 chapter)
+  (sisanya masih NULL, lazy load)
+
+--- NOVEL SCRAPER (background) ---
+Ada script Python yang pernah jalan: /tmp/novel_chapters_scrape.py
+Fungsi: pre-scrape chapter populer di background
+Status: sempat kena CF block sonicmtl, sudah unblock
+Cara jalankan:
+  cat > /tmp/novel_chapters_scrape.py << 'EOF'
+  ...
+  EOF
+  nohup python3 /tmp/novel_chapters_scrape.py > /var/log/novel_chapters.log 2>&1 &
+
+Monitor:
+  tail -5 /var/log/novel_chapters.log
+  ps aux | grep novel_chapters | grep -v grep
+
+================================================================
+END PESAN 2 — ANIME & NOVEL
+================================================================
+
+
+================================================================
+STREAMIFY — PESAN 3: DETAIL MANGA PROXY & SHORT DRAMA
+================================================================
+
+================================================================
+BAGIAN A: SISTEM MANGA — LENGKAP
+================================================================
+
+--- SUMBER DATA ---
+Source   : v1.kiryuu.to
+VPS Manga: mangaserver.playall.me (157.245.196.252)
+
+Flow request:
+  User → VPS Utama (manga-proxy.php) → VPS Manga (mangaserver.playall.me) → v1.kiryuu.to
+
+Mengapa pakai VPS manga terpisah?
+- Kiryuu.to mungkin block IP VPS utama
+- Load balancing request
+- VPS manga = dedicated untuk manga saja
+
+--- SISTEM: REALTIME PROXY ---
+Manga BUKAN dari DB (berbeda dengan anime).
+Semua data manga di-proxy realtime dari kiryuu.to setiap request.
+Tidak ada cache permanen kecuali yang di-register ke DB.
+
+Pengecualian: manga yang di-"register" disimpan ke DB untuk bookmark/history.
+
+--- manga-proxy.php ACTIONS ---
+File: /var/www/streamify/app/backend-vps/api/manga-proxy.php
+
+action=list
+  Params: page (1-280), type, genre, orderby, status
+  Source: mangaserver.playall.me/?page=N
+  Return: [{id, title, slug, cover, type, status, rating, genres:[]}]
+  Total: 280 halaman × ~20 manga = ~5600+ manga
+
+action=detail
+  Params: slug
+  Source: mangaserver.playall.me/{slug}/
+  Return: {id, title, slug, cover, synopsis, type, status, rating, genres:[], authors:[]}
+
+action=chapters
+  Params: slug
+  Source: kiryuu admin-ajax.php langsung dari VPS UTAMA (bukan lewat VPS manga)
+  POST ke: v1.kiryuu.to/wp-admin/admin-ajax.php
+  Data: action=ajax_chap&post=xxx
+  Return: [{id, title, slug, date, chapter_number}]
+
+action=chapter (baca halaman)
+  Params: slug (chapter slug)
+  Source: mangaserver.playall.me/{chapter-slug}/
+  Return: {title, pages:[{page, url}], prev_chapter, next_chapter}
+
+action=image (proxy gambar)
+  Params: url (URL gambar dari kiryuu)
+  Fungsi: Fetch gambar di server, return ke client
+  Mengapa: Kiryuu block hotlink langsung dari browser
+  Headers yang ditambahkan: Referer: https://v1.kiryuu.to
+
+action=register
+  Params: slug
+  Fungsi: Simpan manga ke DB untuk fitur bookmark/history
+  Ambil detail dari proxy, INSERT ke tabel content
+
+action=search
+  Params: q (query)
+  Source: mangaserver.playall.me/?s={query}
+  Return: list manga hasil search
+
+--- LOGIKA FIX MANGA ---
+
+1. Gambar manga tidak muncul (broken):
+   PASTI masalah image proxy
+   Cek action=image di manga-proxy.php
+   Kiryuu pakai hotlink protection → image harus di-proxy
+   Fix: pastikan Referer header: https://v1.kiryuu.to dikirim saat fetch gambar
+
+2. Chapter list kosong:
+   action=chapters fetch dari admin-ajax.php kiryuu
+   Cek POST ke v1.kiryuu.to/wp-admin/admin-ajax.php
+   Data: action=ajax_chap&post={post_id}
+   Post ID didapat dari detail manga
+
+3. Search tidak jalan:
+   Search pakai mangaserver.playall.me/?s={query}
+   Bukan endpoint terpisah, pakai WordPress search
+   Parsing dari HTML response
+
+4. Manga tidak ada di DB (bookmark gagal):
+   Perlu action=register dulu sebelum bookmark
+   MangaDetailPage.tsx harus panggil register saat pertama load
+
+5. Type badge tidak muncul di card:
+   MangaPage.tsx belum implementasi label manhwa/manhua/manga
+   Perlu tambah badge di card berdasarkan field type dari API
+   TODO yang belum diselesaikan
+
+--- FILE REACT MANGA ---
+/var/www/streamify/app/src/pages/MangaPage.tsx
+  - List manga dengan search
+  - TODO: filter type (manga/manhwa/manhua)
+  - TODO: genre filter
+  - TODO: tombol Update Terbaru
+
+/var/www/streamify/app/src/pages/MangaDetailPage.tsx
+  - Detail + chapter list
+  - Register ke DB saat load
+  - TODO: genre tags, rating, type badge perlu tampil di UI
+
+--- TABEL DB MANGA ---
+content (type='manga'/'manhwa'/'manhua'):
+  id, title, slug, type, status, rating, poster, synopsis
+  (sama dengan anime/donghua, dibedakan oleh field type)
+
+chapters: (kalau ada tabel terpisah, kalau tidak maka lazy)
+  Atau langsung proxy tiap baca
+
+================================================================
+BAGIAN B: SISTEM SHORT DRAMA — LENGKAP
+================================================================
+
+--- GAMBARAN UMUM ---
+Short drama = drama pendek (~1-5 menit per episode, 50-100 episode)
+Konten bahasa Indonesia (dubbing/subtitle)
+SEMUA realtime proxy, tidak ada DB untuk short drama
+
+Route: /shortdrama (list) dan /shortdrama/:id?source=xxx (detail)
+
+--- 7 SOURCE YANG DIINTEGRASIKAN ---
+1. Melolo     → melolo.dramabos.my.id
+2. Velolo     → velolo.dramabos.my.id
+3. DramaBox   → dramabox.dramabos.my.id (SKIP, API bermasalah)
+4. NetShort   → netshort.dramabos.my.id
+5. StardustTV → stardusttv.dramabos.my.id
+6. DramaBite  → dramabite.dramabos.my.id (search belum dicek)
+7. Reelife    → reelife.dramabos.my.id (search belum dicek)
+
+API Key untuk semua: 0CCE84D6FBB6017B63BBE84083AE78D0
+Auth Melolo: ?code=KEY (BUKAN apikey!)
+Auth lainnya: ?apikey=KEY
+
+--- STRUKTUR FILE PHP ---
+shortdrama-proxy.php      ← ROUTER UTAMA
+shortdrama-melolo.php     ← Handler khusus Melolo
+shortdrama-velolo.php     ← Handler untuk Velolo, DramaBox, DramaBite, Reelife
+shortdrama-stardusttv.php ← Handler khusus StardustTV
+shortdrama-netshort.php   ← Handler khusus NetShort
+subtitle-proxy.php        ← Convert SRT → WebVTT untuk subtitle
+
+shortdrama-proxy.php me-require_once semua handler,
+lalu routing berdasarkan ?source= dan ?action= parameter.
+
+PERHATIAN: Pernah terjadi bug require_once duplikat (4x include file yang sama)
+Selalu cek file proxy tidak ada duplicate require_once!
+
+--- DETAIL PER SOURCE ---
+
+=== MELOLO ===
+Base URL: https://melolo.dramabos.my.id
+Auth: ?code=0CCE84D6FBB6017B63BBE84083AE78D0
+
+Endpoints:
+  List    : GET /api/home?lang=id&offset=0&code=KEY
+  Detail  : GET /api/detail/:id?lang=id&code=KEY
+  Video   : GET /api/video/:vid?lang=id&code=KEY
+  Search  : GET /api/search?q=xxx&offset=0&lang=id&code=KEY
+
+Response format list (/api/home):
+{
+  code: 0,
+  data: {
+    cell: {
+      cell_data: [
+        {
+          books: [
+            {
+              book_id, book_name, thumb_url, abstract,
+              serial_count, show_creation_status,
+              category_info (JSON string!), is_hot, is_new_book
+            }
+          ]
+        }
+      ]
+    },
+    has_more: true/false,
+    next_offset: 20
+  }
+}
+PENTING: category_info adalah JSON string yang perlu json_decode lagi!
+Genre dari category_info: ambil yang MainCategory = true
+
+Response format detail (/api/detail/:id):
+{
+  code: 0,
+  id, title, cover, intro,
+  episodes: 66, (total episode count)
+  videos: [
+    {episode: 1, vid: "xxx", duration: 102},
+    {episode: 2, vid: "xxx", duration: 163},
+    ...
+  ]
+}
+Untuk play: fetch /api/video/:vid untuk dapat URL
+
+Response format video (/api/video/:vid):
+{
+  url: "https://v16m.byteicdn.com/...", (default 480p)
+  backup: "...",
+  list: [
+    {definition: "480p", url: "..."},
+    {definition: "720p", url: "..."},
+    ...
+  ]
+}
+
+Response format search (/api/search):
+{
+  code: 0,
+  count: 32,
+  has_more: true,
+  data: [
+    {id, name, cover, intro, episodes, ...}
+  ]
+}
+Field: "name" (bukan title), "intro" (bukan synopsis), "data" (bukan content)!
+
+=== VELOLO ===
+Base URL: https://velolo.dramabos.my.id
+Auth: ?apikey=KEY
+
+Endpoints:
+  List     : GET /home?page=1&page_size=20&apikey=KEY&lang=id
+  Hot      : GET /hot?apikey=KEY&lang=id
+  New      : GET /new?page=1&page_size=20&apikey=KEY&lang=id
+  Category : GET /category?labelId=xxx&page=1&apikey=KEY&lang=id
+  Labels   : GET /labels?apikey=KEY&lang=id  ← Genre dari API!
+  Detail   : GET /drama/:id?apikey=KEY&lang=id
+  Search   : GET /search?q=xxx&page=1&apikey=KEY&lang=id
+
+Response format list (/home):
+{
+  code: 200,
+  rows: [
+    {
+      id, name, cover, introduction,
+      episode (count), label: ["Romantis", "Modern"],
+      collections, shelfTime, totalDuration,
+      language: "id"
+    }
+  ],
+  total: 1971
+}
+
+Response format detail (/drama/:id):
+{
+  code: 200,
+  data: {
+    videoInfo: {name, cover, introduction},  ← INFO DRAMA DI SINI (bukan dramaInfo!)
+    episodesInfo: {
+      rows: [
+        {
+          id, orderNumber,
+          videoAddress: "https://bunny.velolo.tv/xxx/1.m3u8",  ← URL LANGSUNG!
+          zimu: "https://res.velolo.tv/.../1.id.srt",  ← SUBTITLE INDONESIA
+          isLock, price
+        }
+      ]
+    }
+  }
+}
+PENTING: field "videoInfo" BUKAN "dramaInfo"!
+Video URL langsung ada, tidak perlu fetch endpoint video terpisah.
+zimu = path ke file .srt subtitle Indonesia (tapi ada karakter China di path!)
+
+=== STARDUSTTV ===
+Base URL: https://stardusttv.dramabos.my.id
+Auth: ?code=KEY (sama dengan Melolo)
+
+Endpoints:
+  List   : GET /v1/list?page=1&lang=id&code=KEY
+  Detail : GET /v1/detail/:slug/:id?lang=id&code=KEY
+  Episode: GET /v1/detail/:slug/:id/episode/:ep?lang=id&code=KEY
+  Search : GET /v1/find?q=xxx&lang=id&code=KEY
+  Langs  : GET /v1/langs
+
+PENTING: Detail butuh SLUG + ID (dua parameter!)
+ID format di sistem kita: "slug|id" (pakai pipe sebagai separator)
+Contoh: "mahkota-dendam-sang-ratu|17689"
+
+Response format list (/v1/list):
+{
+  status: true,
+  data: [
+    {id, slug, title, poster, plays_num, episode (count), intro}
+  ]
+}
+
+Response format detail (/v1/detail/:slug/:id):
+{
+  success: true,
+  data: {
+    id, slug, title, poster, totalEpisodes,
+    episodes: {
+      "1": {h264: "https://stardusttv.dramabos.my.id/stream?url=...", h265: "..."},
+      "2": {h264: "...", h265: "..."},
+      ...
+    }
+    (bukan array! dict dengan key numerik string "1", "2", dst)
+  }
+}
+PENTING: episodes bukan array, tapi dict dengan key string numerik!
+Cara iterate di PHP: foreach ($data['episodes'] as $ep_num => $val)
+Video URL via /stream?url= (proxy dari stardusttv)
+URL asli di belakang /stream?url= ada karakter China di path
+
+=== NETSHORT ===
+Base URL: https://netshort.dramabos.my.id
+Auth: ?code=KEY
+
+Endpoints:
+  List   : GET /api/list/:page?lang=in&code=KEY
+  Detail : GET /api/drama/:id?lang=in&code=KEY
+  Watch  : GET /api/watch/:id/:ep?lang=in&code=KEY
+  Search : GET /api/search?q=xxx&page=1&lang=in&code=KEY
+
+PENTING: lang=in (Indonesian) bukan lang=id!
+PENTING: code check: in_array($d['code'], [0, 200]) karena netshort pakai 200 bukan 0
+
+Response format list (/api/list/:page):
+{
+  code: 200,
+  data: {
+    dataList: [
+      {
+        shortPlayId, shortPlayName, shortPlayCover,
+        maxEps (total episode), maxOffset,
+        labelArray: ["genre1", "genre2"],
+        isNewLabel, heatScoreShow
+      }
+    ],
+    completed, count, maxOffset
+  }
+}
+Field: shortPlayId (bukan id!), shortPlayName (bukan name!), shortPlayCover!
+
+Response format watch (/api/watch/:id/:ep):
+{
+  code: 200, (BUKAN 0!)
+  data: {
+    videoUrl: "https://awscdn.netshort.com/...",  ← URL VIDEO
+    subtitles: [
+      {lang: "id_ID", url: "https://awscdn.netshort.com/..."}  ← SUBTITLE INDONESIA
+    ],
+    current: 1, maxEps: 58, status: true
+  }
+}
+NetShort punya subtitle Indonesia langsung dari API!
+
+Response format search (/api/search):
+{
+  code: 200,
+  data: {
+    searchCodeSearchResult: [  ← ARRAY HASIL DI SINI (bukan rows atau data!)
+      {shortPlayId, shortPlayName, shortPlayCover, ...}
+    ],
+    simpleSearchResult: [],  ← Biasanya kosong
+    total: 4518
+  }
+}
+PENTING: Hasil ada di searchCodeSearchResult, BUKAN simpleSearchResult!
+
+--- SUBTITLE SYSTEM (VELOLO) ---
+Velolo episode punya field "zimu" = URL ke file .srt
+Contoh: https://res.velolo.tv/indonesiaPlay/2028390.../纨绔大小姐srt/1.id.srt
+
+Masalah: URL punya karakter China (纨绔大小姐) di path → tidak bisa fetch langsung
+
+Solusi: subtitle-proxy.php
+File: /var/www/streamify/app/backend-vps/api/subtitle-proxy.php
+
+Cara kerja subtitle-proxy.php:
+1. Terima URL via GET parameter ?url=xxx
+2. $_GET sudah auto-decode URL → URL berisi karakter China
+3. preg_replace_callback encode karakter non-ASCII:
+   preg_replace_callback('/[^\x00-\x7F]/', function($m) {
+     return rawurlencode($m[0]);
+   }, $url)
+4. Fetch file .srt dari velolo dengan URL yang sudah di-encode
+5. Convert SRT → WebVTT:
+   - Tambah header "WEBVTT\n\n"
+   - Ganti koma di timestamp: 00:00:15,866 → 00:00:15.866
+6. Return dengan header Content-Type: text/vtt; charset=utf-8
+
+Cara pakai di React (ShortDramaDetailPage.tsx):
+  setSubtitleUrl('/api/subtitle-proxy.php?url=' + encodeURIComponent(directSubtitle))
+  
+  Kemudian render:
+  <video>
+    <track kind="subtitles" src={subtitleUrl} srcLang="id" label="Indonesia" default />
+  </video>
+
+PENTING: encodeURIComponent sekali saja (single encode)!
+Double encode tidak bekerja.
+
+--- VIDEO LOADING LOGIC PER SOURCE ---
+ShortDramaDetailPage.tsx loadVideo() function:
+
+function loadVideo(vid, ep, directUrl?, directSubtitle?) {
+  if (directUrl) {
+    // Velolo, StardustTV, NetShort → URL sudah ada dari detail
+    setVideoUrl(directUrl)
+    if (directSubtitle) {
+      setSubtitleUrl('/api/subtitle-proxy.php?url=' + encodeURIComponent(directSubtitle))
+    }
+    return
+  }
+  
+  // Melolo → perlu fetch URL dari /api/video/:vid
+  fetch('/api/shortdrama-proxy.php?action=video&vid=' + vid + '&source=' + source)
+    .then(r => r.json())
+    .then(res => {
+      setVideoUrl(res.data.url)
+      setServers(res.data.servers)  // untuk quality selector
+    })
+}
+
+Saat load episode pertama (dari detail response):
+  loadVideo(video.vid, 1, video.url, video.subtitle)
+  
+  Kalau source=melolo: video.url kosong → fetch endpoint video
+  Kalau source=velolo: video.url ada (videoAddress) → langsung set
+  Kalau source=stardusttv: video.url ada (h264) → langsung set
+  Kalau source=netshort: video.url kosong, perlu fetch /api/watch/:id/:ep
+
+--- SEARCH SYSTEM SHORT DRAMA ---
+Search mencari dari SEMUA source sekaligus (search all).
+
+Logika search all di shortdrama-proxy.php:
+1. Panggil melolo_search($q)
+2. Panggil stardust_search($q)
+3. Panggil netshort_search($q)
+4. Panggil velolo_search('velolo', $q)
+5. Loop semua hasil, deduplikasi pakai array $seen_ids
+6. Return gabungan hasil
+
+Deduplikasi:
+  $seen_ids = []
+  foreach ($results as $item) {
+    if (!in_array($item['id'], $seen_ids)) {
+      $all[] = $item
+      $seen_ids[] = $item['id']
+    }
+  }
+
+MASALAH AKTIF: NetShort search cuma masuk 1 item
+Penyebab: shortPlayId dari NetShort yang panjang (numeric string 19 digit)
+Kemungkinan bentrok dengan ID dari source lain
+Fix yang perlu dilakukan:
+  Prefix ID dengan nama source: "netshort_" + shortPlayId
+  Atau cek apakah ID benar-benar bentrok dengan array_unique
+
+Status search saat ini:
+  Melolo: 32 hasil ✅
+  Velolo: 257 hasil ✅
+  StardustTV: 16 hasil ✅
+  NetShort: 1 item saja ⚠️ (masalah deduplikasi)
+  DramaBite: belum dicek ❓
+  Reelife: belum dicek ❓
+
+--- UI SHORT DRAMA ---
+ShortDramaPage.tsx features:
+- Search bar (auto-search saat Enter atau klik Cari)
+- Source buttons (7 tombol, warna per platform)
+- Featured banner (auto-scroll 5 detik, prev/next arrows, dot indicators)
+- Tab: Beranda | 🔥 Hot | ✨ Terbaru
+- Genre filter (horizontal scroll pills)
+  - Velolo: genre dari API /labels endpoint
+  - Source lain: hardcode array GENRES
+- List drama: 1 kolom landscape (poster kecil kiri, info di kanan)
+- "Muat Lebih" button
+
+ShortDramaDetailPage.tsx features:
+- Hero banner (poster blur background)
+- Breadcrumb: Short Drama > Judul
+- Info: judul, jumlah episode, synopsis
+- Video player HTML5
+- Subtitle track (untuk velolo)
+- Server/kualitas selector (untuk melolo yang punya multi-quality)
+- Episode grid (tap untuk play)
+- Format tombol episode: nomor + durasi (kalau ada)
+
+--- LOGIKA FIX SHORT DRAMA ---
+
+1. Video tidak muncul (player hitam):
+   - Cek apakah directUrl ter-set
+   - Velolo: pastikan videoAddress ada di episode, bukan string kosong
+   - StardustTV: pastikan h264 field ada, cek /stream?url= endpoint jalan
+   - NetShort: fetch /api/watch/:id/:ep dengan code=KEY
+   - Melolo: fetch /api/video/:vid
+
+2. Subtitle tidak muncul:
+   - Cek field zimu di velolo detail
+   - Cek subtitle-proxy.php bisa fetch URL (cek encode karakter China)
+   - Browser harus support <track> element
+   - Pastikan Content-Type: text/vtt (bukan text/plain)
+
+3. Source tidak loading:
+   - Cek apakah API source tersebut online
+   - Cek auth: Melolo pakai ?code=, lainnya pakai ?apikey=
+   - Cek apakah ada duplicate require_once di proxy.php
+
+4. Genre filter tidak muncul untuk source tertentu:
+   - Hanya Velolo yang punya /labels endpoint
+   - Source lain pakai hardcode GENRES array di ShortDramaPage.tsx
+   - Kalau tombol genre di-klik tapi source bukan velolo → tidak ada efek
+   (perlu perbaikan: disable genre filter untuk source non-velolo)
+
+5. Banner tidak muncul:
+   - featuredDramas diambil dari items yang is_hot atau is_new
+   - Kalau semua is_hot=false dan is_new=false → ambil 5 pertama
+   - Pastikan content array tidak kosong
+
+--- CATATAN PENTING SHORT DRAMA ---
+
+1. Route HARUS /shortdrama (bukan /short-drama)
+   Tombol di homepage sudah di-update ke /shortdrama
+
+2. Source dikirim via query param: /shortdrama/:id?source=velolo
+   ShortDramaDetailPage.tsx baca source dari useSearchParams()
+
+3. StardustTV ID format: "slug|id" (ada pipe separator)
+   Contoh: "mahkota-dendam-sang-ratu|17689"
+   Detail: split by "|" → $parts[0]=slug, $parts[1]=id
+
+4. NetShort field names berbeda dari semua source lain:
+   - shortPlayId (bukan id)
+   - shortPlayName (bukan name/title)
+   - shortPlayCover (bukan cover/poster)
+
+5. DramaBox API sedang error (kata developer-nya)
+   Skip integrasi DramaBox sampai API-nya fix
+
+================================================================
+END PESAN 3 — MANGA & SHORT DRAMA
+================================================================
+
+================================================================
+STREAMIFY — TAMBAHAN PESAN 2 & 3: YANG TERLEWAT
+================================================================
+Ini tambahan penting yang tidak ada di pesan sebelumnya.
+================================================================
+
+================================================================
+TAMBAHAN 1: MELOLO AUTH HISTORY (PENTING!)
+================================================================
+
+Melolo API auth pernah dicoba beberapa cara:
+
+GAGAL:
+  ?apikey=KEY          ← tidak work
+  Bearer token header  ← tidak work untuk video
+  ?token=KEY           ← tidak work
+
+BERHASIL:
+  ?code=KEY (di URL parameter)
+  Contoh: https://melolo.dramabos.my.id/api/home?lang=id&offset=0&code=0CCE84D6FBB6017B63BBE84083AE78D0
+
+Kalau ada Claude baru yang coba pakai apikey atau Bearer untuk Melolo = SALAH.
+SELALU pakai ?code=KEY untuk Melolo.
+
+================================================================
+TAMBAHAN 2: MELOLO vs VELOLO — BEDANYA
+================================================================
+
+Awalnya dikira Melolo dan Velolo sama. Ternyata BEDA:
+
+- **Velolo** = nama samaran Melolo (biar tidak di-takedown Google)
+  Tapi ternyata dua platform berbeda yang independent!
+  Velolo (rating 2.9) vs Melolo (rating 4.8, 50jt+ download)
+
+- **Melolo API** = platform video drama, auth: ?code=KEY
+  Video format: MP4 langsung multi-resolusi (240p/360p/480p/540p/720p)
+  Lebih bagus dari Velolo!
+
+- **Velolo API** = platform lain, auth: ?apikey=KEY
+  Video format: .m3u8 HLS stream
+
+Keduanya dari dramabos.my.id tapi endpoint berbeda:
+  melolo.dramabos.my.id → Melolo
+  velolo.dramabos.my.id → Velolo
+
+================================================================
+TAMBAHAN 3: DOTDRAMA — BELUM DIINTEGRASIKAN
+================================================================
+
+Dari daftar 7 platform short drama yang diberikan owner:
+  1. Melolo ✅ terintegrasi
+  2. DramaBox ❌ skip (API error)
+  3. DotDrama ❓ BELUM DIINTEGRASIKAN SAMA SEKALI
+  4. Netshort ✅ terintegrasi
+  5. Stardusttv ✅ terintegrasi
+  6. Reelife ⚠️ terintegrasi tapi search belum dicek
+  7. DramaBite ⚠️ terintegrasi tapi search belum dicek
+
+DotDrama belum ada di kode sama sekali!
+URL dokumentasi: https://dotdrama.dramabos.my.id/api.html
+Perlu cek struktur API-nya sebelum integrasi.
+
+================================================================
+TAMBAHAN 4: MELOLO /api/home STRUKTUR DETAIL
+================================================================
+
+Melolo /api/home response struktur yang kompleks:
+{
+  code: 0,
+  data: {
+    cell: {
+      cell_data: [    ← ARRAY of cell objects
+        {
+          books: [    ← ARRAY of books per cell
+            {
+              book_id,
+              book_name,
+              thumb_url,
+              abstract,
+              serial_count,       ← total episodes
+              show_creation_status, ← "Selesai" / "Ongoing"
+              category_info,      ← JSON STRING! perlu json_decode lagi
+              first_chapter_item_id,
+              gender,             ← "1"=male, "2"=female, "0"=all
+              is_hot,             ← "1" atau "0" (string!)
+              is_new_book,        ← "1" atau "0" (string!)
+              ...
+            }
+          ]
+        },
+        ...
+      ]
+    },
+    has_more: true/false,
+    next_offset: 18,    ← pakai ini untuk halaman berikutnya
+    next_num: 18
+  }
+}
+
+PENTING:
+- is_hot dan is_new_book adalah STRING "1"/"0", bukan boolean!
+  Cek dengan: $book['is_hot'] === '1'  (bukan == true)
+- category_info adalah JSON STRING yang perlu di-decode lagi
+  Genre diambil dari array yang MainCategory = true
+- next_offset untuk pagination (bukan page number!)
+
+================================================================
+TAMBAHAN 5: MELOLO /api/detail STRUKTUR
+================================================================
+
+Melolo detail tidak return episodesInfo seperti Velolo.
+Return: {
+  code: 0,
+  id, title, cover, intro,
+  episodes: 66,    ← total count
+  videos: [        ← LIST EPISODE DENGAN VID
+    {episode: 1, vid: "7543312165004905473", duration: 102},
+    {episode: 2, vid: "7543312157174139920", duration: 163},
+    ...
+  ]
+}
+
+Untuk play: gunakan vid dari videos array → fetch /api/video/:vid
+
+================================================================
+TAMBAHAN 6: MELOLO VIDEO FORMAT
+================================================================
+
+Melolo /api/video/:vid return MP4 langsung (bukan HLS/m3u8):
+{
+  url: "http://v16m-default.tiktokcdn.com/...",  ← default (biasanya HD)
+  backup: "http://...",
+  list: [
+    {definition: "240p", url: "https://v16m.byteicdn.com/..."},
+    {definition: "360p", url: "..."},
+    {definition: "480p", url: "..."},
+    {definition: "540p", url: "..."},
+    {definition: "720p", url: "..."}
+  ]
+}
+
+MP4 format lebih bagus dari HLS karena:
+- Bisa seek langsung
+- Tidak perlu HLS player
+- Support native di semua browser
+
+Default yang dipakai: 480p (kalau ada), kalau tidak ada ambil yang terakhir.
+
+================================================================
+TAMBAHAN 7: MELOLO SEARCH FORMAT
+================================================================
+
+Melolo /api/search response BERBEDA dari list:
+{
+  code: 0,
+  count: 32,
+  has_more: true,
+  query: "cinta",
+  data: [    ← LANGSUNG array, bukan data.cell.cell_data
+    {
+      id,           ← bukan book_id!
+      name,         ← bukan book_name!
+      cover,
+      intro,        ← bukan abstract!
+      episodes,     ← bukan serial_count!
+      author,
+      ...
+    }
+  ]
+}
+
+PENTING field berbeda dengan list:
+  List: book_id, book_name, abstract, serial_count, thumb_url
+  Search: id, name, intro, episodes, cover
+
+================================================================
+TAMBAHAN 8: DONGHUA EMBED DETAIL
+================================================================
+
+DonghuaDetailPage.tsx fetch embed dari anichin via donghua-proxy.php.
+Anichin embed proses:
+1. Fetch /episode-slug-subtitle-indonesia/
+2. Parse iframe/embed element dari HTML
+3. Encode base64 kalau diperlukan
+4. Return embed URL
+
+ok.ru = server paling reliable untuk video donghua
+Kalau ok.ru mati, coba server lain dari embed list.
+
+DonghuaPage.tsx masih fetch list dari anichin (proxy realtime),
+tapi DonghuaDetailPage.tsx sudah fetch dari DB (content.php).
+Ada potensi slug mismatch kalau anichin return slug yang berbeda dari DB.
+
+================================================================
+TAMBAHAN 9: MANGA IMAGE PROXY DETAIL
+================================================================
+
+manga-proxy.php action=image bekerja seperti ini:
+1. Terima URL gambar dari kiryuu via GET ?url=xxx
+2. Fetch gambar dengan Referer header
+3. Detect MIME type dengan finfo
+4. Return gambar dengan header Cache-Control: public, max-age=86400
+
+Kalau tanpa proxy:
+- Browser fetch langsung ke kiryuu → 403 Forbidden (hotlink blocked)
+- HARUS lewat proxy server
+
+URL gambar kiryuu format: https://v1.kiryuu.to/wp-content/uploads/...
+Beberapa gambar juga dari CDN lain tapi semua butuh Referer
+
+================================================================
+TAMBAHAN 10: SEARCH NOVEL LIMITATION
+================================================================
+
+Novel search HANYA dari DB (novel yang sudah pernah dibuka/di-fetch):
+- Kalau user search "cinta" → hanya return novel yang ada di DB
+- Novel yang belum pernah dibuka tidak muncul
+- Ini karena kita tidak punya index semua novel
+
+Cara fix kalau mau search semua novel:
+- Scrape semua metadata novel dari sonicmtl dan simpan ke DB
+- Atau add endpoint search ke sonicmtl (kalau ada)
+
+Current state: Search terbatas tapi novel yang sudah pernah dibuka akan muncul.
+
+================================================================
+TAMBAHAN 11: HISTORY DONGHUA BUG (SUDAH FIX)
+================================================================
+
+Pernah ada bug: history donghua tidak tersimpan karena contentId = 0.
+
+Root cause: DonghuaDetailPage.tsx:
+1. Fetch detail dari donghua-proxy.php
+2. Proxy return data donghua
+3. setContentId(res.data.id) dipanggil
+4. Tapi CommentSection render sebelum contentId ready (masih 0)
+
+Fix yang sudah diterapkan:
+- CommentSection: if (!contentId) return null;
+- DonghuaDetailPage: setContentId(res.id) langsung dari content.php response
+  (bukan dari proxy)
+
+================================================================
+TAMBAHAN 12: SYNOPSIS HTML ENTITIES FIX
+================================================================
+
+Banyak synopsis/description dari source (otakudesu, anichin) berisi HTML entities:
+  &#8211;  → –
+  &amp;    → &
+  &lt;     → <
+  dll
+
+Fix sudah diterapkan di:
+- DonghuaDetailPage.tsx: decode via textarea.innerHTML trick
+  const el = document.createElement('textarea');
+  el.innerHTML = htmlString;
+  return el.value;
+- novel.php: html_entity_decode() di PHP
+
+Kalau ada halaman lain yang synopsis-nya masih ada entities → apply fix yang sama.
+
+================================================================
+TAMBAHAN 13: MANGA CHAPTERS ENDPOINT DETAIL
+================================================================
+
+Manga chapters tidak lewat VPS manga, tapi langsung dari VPS utama:
+
+manga-proxy.php action=chapters:
+  POST ke v1.kiryuu.to/wp-admin/admin-ajax.php
+  body: action=ajax_chap&post={post_id}
+  header: Referer: https://v1.kiryuu.to/
+
+post_id didapat dari detail manga response.
+Kalau kiryuu ganti endpoint admin-ajax → perlu update.
+
+Response format dari kiryuu admin-ajax:
+  Array of chapters: [{id, title, number, date, slug}]
+
+================================================================
+TAMBAHAN 14: VPS KECIL ENDPOINT
+================================================================
+
+VPS kecil (143.198.93.61) menyediakan endpoint:
+  /api/get-embed.php?slug={episode-slug}  ← untuk anime embed
+  /api/get-episodes.php?slug={anime-slug} ← untuk episode list
+
+Kalau VPS kecil down:
+  - Anime embed tidak bisa load
+  - Episode update otomatis tidak jalan
+  - Tapi list anime dari DB masih jalan
+
+VPS kecil harus punya kode terbaru dari GitHub:
+  git pull origin main
+  (push pertama pakai --force, selanjutnya normal)
+
+================================================================
+TAMBAHAN 15: HOMEPAGE BELUM ADA SECTION SHORT DRAMA
+================================================================
+
+Homepage user (Index.tsx) belum ada section untuk Short Drama.
+Tombol navigasi di homepage sudah ada (link ke /shortdrama),
+tapi tidak ada preview/featured drama di homepage.
+
+TODO: Tambah section "Drama Pendek Populer" di homepage
+dengan 5-10 drama dari Velolo atau Melolo.
+
+Cara implementasi:
+  fetch /api/shortdrama-proxy.php?action=hot&source=velolo
+  → ambil 6 drama hot
+  → tampilkan di homepage sebagai horizontal scroll
+
+================================================================
+END TAMBAHAN PESAN 2 & 3
+================================================================
